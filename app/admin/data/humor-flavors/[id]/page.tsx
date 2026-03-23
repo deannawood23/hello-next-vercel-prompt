@@ -246,9 +246,9 @@ export default async function ManageFlavorStepsPage({
         await Promise.all([
             fetchOrderedSteps(supabase, resolvedFlavorId),
             supabase.from('llm_models').select('*').order('name', { ascending: true }),
-            supabase.from('humor_flavor_step_types').select('*').order('name', { ascending: true }),
-            supabase.from('llm_input_types').select('*').order('name', { ascending: true }),
-            supabase.from('llm_output_types').select('*').order('name', { ascending: true }),
+            supabase.from('humor_flavor_step_types').select('*'),
+            supabase.from('llm_input_types').select('*'),
+            supabase.from('llm_output_types').select('*'),
         ]);
 
     const models = (modelsResult.data ?? []).map((row) => asRecord(row)).sort(sortByLabel);
@@ -427,14 +427,39 @@ export default async function ManageFlavorStepsPage({
                         const stepTypeId = pickNumber(step, ['humor_flavor_step_type_id'], null);
                         const inputTypeId = pickNumber(step, ['llm_input_type_id'], null);
                         const outputTypeId = pickNumber(step, ['llm_output_type_id'], null);
-                        const model = llmModelId !== null ? asRecord(modelById.get(llmModelId)) : {};
-                        const stepType = stepTypeId !== null ? asRecord(stepTypeById.get(stepTypeId)) : {};
-                        const inputType = inputTypeId !== null ? asRecord(inputTypeById.get(inputTypeId)) : {};
-                        const outputType = outputTypeId !== null ? asRecord(outputTypeById.get(outputTypeId)) : {};
+                        const modelFromStep = asRecord(step.llm_model);
+                        const stepTypeFromStep = asRecord(step.humor_flavor_step_type);
+                        const inputTypeFromStep = asRecord(step.llm_input_type);
+                        const outputTypeFromStep = asRecord(step.llm_output_type);
+                        const model =
+                            Object.keys(modelFromStep).length > 0
+                                ? modelFromStep
+                                : llmModelId !== null
+                                  ? asRecord(modelById.get(llmModelId))
+                                  : {};
+                        const stepType =
+                            Object.keys(stepTypeFromStep).length > 0
+                                ? stepTypeFromStep
+                                : stepTypeId !== null
+                                  ? asRecord(stepTypeById.get(stepTypeId))
+                                  : {};
+                        const inputType =
+                            Object.keys(inputTypeFromStep).length > 0
+                                ? inputTypeFromStep
+                                : inputTypeId !== null
+                                  ? asRecord(inputTypeById.get(inputTypeId))
+                                  : {};
+                        const outputType =
+                            Object.keys(outputTypeFromStep).length > 0
+                                ? outputTypeFromStep
+                                : outputTypeId !== null
+                                  ? asRecord(outputTypeById.get(outputTypeId))
+                                  : {};
                         const systemPrompt = pickPrompt(step, ['llm_system_prompt']);
                         const userPrompt = pickPrompt(step, ['llm_user_prompt']);
                         const temperature = pickNumber(step, ['llm_temperature'], null);
-                        const description = pickString(step, ['description'], '');
+                        const stepTypeDescription = pickString(stepType, ['description'], '');
+                        const description = stepTypeDescription || pickString(step, ['description'], '');
                         const isEditing = stepId !== null && stepId === editingStepId;
 
                         return (
@@ -444,12 +469,15 @@ export default async function ManageFlavorStepsPage({
                             >
                                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                                     <div>
-                                        <h4 className="text-lg font-semibold text-[var(--admin-text)]">
-                                            Step {stepOrder}
-                                        </h4>
+                                        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                                            <h4 className="text-xl font-semibold text-[var(--admin-text)]">
+                                                Step {stepOrder}
+                                            </h4>
+                                            <p className="text-lg font-semibold text-[var(--admin-text)]">
+                                                {pickString(stepType, ['slug', 'name', 'description'], 'Unassigned step type')}
+                                            </p>
+                                        </div>
                                         <p className="mt-1 text-sm text-[var(--admin-muted)]">
-                                            {pickString(stepType, ['slug', 'name', 'description'], 'Unassigned step type')}
-                                            {' · '}
                                             {pickString(model, ['name'], 'No model selected')}
                                             {' · '}
                                             {pickString(inputType, ['slug', 'name'], 'Unknown input')}
@@ -695,15 +723,7 @@ export default async function ManageFlavorStepsPage({
                                                 Collapse
                                             </span>
                                         </summary>
-                                        <div className="grid gap-4 border-t border-[var(--admin-border)] p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
-                                            <div className="space-y-3 rounded-2xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-4">
-                                                <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
-                                                    Description
-                                                </p>
-                                                <p className="text-sm leading-6 text-[var(--admin-text)]">
-                                                    {description || 'No description provided.'}
-                                                </p>
-                                            </div>
+                                        <div className="border-t border-[var(--admin-border)] p-4">
                                             <div className="space-y-3 rounded-2xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-4">
                                                 <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
                                                     Prompts
@@ -721,15 +741,6 @@ export default async function ManageFlavorStepsPage({
                                                             {userPrompt || 'No user prompt set.'}
                                                         </p>
                                                     </div>
-                                                </div>
-                                            </div>
-                                            <div className="space-y-3 rounded-2xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-4">
-                                                <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
-                                                    Settings
-                                                </p>
-                                                <div className="space-y-2 text-sm text-[var(--admin-text)]">
-                                                    <p>Order: {stepOrder}</p>
-                                                    <p>Temperature: {temperature ?? 'N/A'}</p>
                                                 </div>
                                             </div>
                                         </div>

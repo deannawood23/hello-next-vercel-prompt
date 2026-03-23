@@ -48,7 +48,15 @@ export async function fetchFlavor(supabase: AdminSupabase, flavorId: number | st
 export async function fetchOrderedSteps(supabase: AdminSupabase, flavorId: number | string) {
     const result = await supabase
         .from('humor_flavor_steps')
-        .select('*')
+        .select(
+            `
+            *,
+            llm_input_type:llm_input_types!humor_flavor_steps_llm_input_type_id_fkey (*),
+            llm_output_type:llm_output_types!humor_flavor_steps_llm_output_type_id_fkey (*),
+            llm_model:llm_models!humor_flavor_steps_llm_model_id_fkey (*),
+            humor_flavor_step_type:humor_flavor_step_types!humor_flavor_steps_humor_flavor_step_id_fkey (*)
+            `
+        )
         .eq('humor_flavor_id', flavorId)
         .order('order_by', { ascending: true });
 

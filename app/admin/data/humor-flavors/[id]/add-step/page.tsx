@@ -93,9 +93,9 @@ export default async function AddHumorFlavorStepPage({
     const [steps, modelsResult, stepTypesResult, inputTypesResult, outputTypesResult] = await Promise.all([
         fetchOrderedSteps(supabase, resolvedFlavorId),
         supabase.from('llm_models').select('*').order('name', { ascending: true }),
-        supabase.from('humor_flavor_step_types').select('*').order('name', { ascending: true }),
-        supabase.from('llm_input_types').select('*').order('name', { ascending: true }),
-        supabase.from('llm_output_types').select('*').order('name', { ascending: true }),
+        supabase.from('humor_flavor_step_types').select('*'),
+        supabase.from('llm_input_types').select('*'),
+        supabase.from('llm_output_types').select('*'),
     ]);
 
     const models = (modelsResult.data ?? []).map((row) => row as Record<string, unknown>).sort(sortByLabel);
