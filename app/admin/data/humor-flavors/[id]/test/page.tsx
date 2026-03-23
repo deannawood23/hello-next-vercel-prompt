@@ -72,32 +72,32 @@ export default async function HumorFlavorTestPage({
                                 </div>
                             </div>
 
-                            <div className="mt-4 grid grid-cols-6 gap-2">
+                            <div className="mt-4 grid grid-cols-8 gap-1.5 md:grid-cols-10 xl:grid-cols-12">
                                 {imageSet.previewImages.length > 0 ? (
                                     imageSet.previewImages.map((image, index) => {
                                         const imageUrl = pickString(image, ['url', 'cdn_url', 'storage_url'], '');
                                         return (
                                             <div
                                                 key={`${imageSet.id}-${index}`}
-                                                className="overflow-hidden rounded-xl bg-[var(--admin-panel-strong)]"
+                                                className="overflow-hidden rounded-lg bg-[var(--admin-panel-strong)]"
                                             >
                                                 {imageUrl ? (
                                                     // eslint-disable-next-line @next/next/no-img-element
                                                     <img
                                                         src={imageUrl}
                                                         alt={pickString(image, ['image_description', 'description'], imageSet.slug)}
-                                                        className="h-14 w-full object-cover"
+                                                        className="h-10 w-full object-cover"
                                                     />
                                                 ) : (
-                                                    <div className="flex h-14 items-center justify-center text-[10px] text-[var(--admin-muted)]">
-                                                        No image
+                                                    <div className="flex h-10 items-center justify-center text-[9px] text-[var(--admin-muted)]">
+                                                        Empty
                                                     </div>
                                                 )}
                                             </div>
                                         );
                                     })
                                 ) : (
-                                    <div className="col-span-6 flex h-14 items-center justify-center rounded-xl bg-[var(--admin-panel-strong)] text-xs text-[var(--admin-muted)]">
+                                    <div className="col-span-8 flex h-10 items-center justify-center rounded-lg bg-[var(--admin-panel-strong)] text-xs text-[var(--admin-muted)] md:col-span-10 xl:col-span-12">
                                         No images in this set.
                                     </div>
                                 )}

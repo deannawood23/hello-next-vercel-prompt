@@ -408,7 +408,7 @@ export default async function ManageFlavorStepsPage({
                             >
                                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                                     <div>
-                                        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                                             <h4 className="text-xl font-semibold text-[var(--admin-text)]">
                                                 Step {stepOrder}
                                             </h4>

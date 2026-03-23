@@ -1089,7 +1089,7 @@ export default async function AdminResourcePage({
             return (
                 <article
                     key={id}
-                    className="group relative rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5 transition hover:border-[var(--ls-border-accent)] hover:bg-[var(--ls-surface-hover)]"
+                    className="group relative cursor-pointer rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5 transition hover:border-[var(--ls-border-accent)] hover:bg-[var(--ls-surface-hover)]"
                 >
                     <Link
                         href={`/admin/data/humor-flavors/${id}`}
@@ -1175,7 +1175,7 @@ export default async function AdminResourcePage({
                     <div className="flex flex-wrap items-center gap-3">
                         <Link
                             href="/admin/data/humor-flavors?create=1"
-                            className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
+                            className="inline-flex rounded-xl border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
                         >
                             Create Flavor
                         </Link>

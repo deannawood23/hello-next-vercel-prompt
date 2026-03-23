@@ -309,7 +309,7 @@ export async function fetchStudyImageSetsWithPreviews(supabase: AdminSupabase) {
             slug: pickString(setRow, ['slug'], `set-${setId}`),
             description: pickString(setRow, ['description'], ''),
             imageCount: images.length,
-            previewImages: images.slice(0, 4),
+            previewImages: images,
         });
     }
 
