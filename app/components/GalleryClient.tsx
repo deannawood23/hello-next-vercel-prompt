@@ -1,0 +1,635 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '../../src/lib/supabase/client';
+
+type Image = {
+    id: string;
+    url: string | null;
+    created_datetime_utc: string;
+    captions: {
+        id: string;
+        content: string | null;
+        created_datetime_utc: string;
+    }[];
+};
+
+type CaptionSessionItem = {
+    imageId: string;
+    imageUrl: string | null;
+    caption: {
+        id: string;
+        content: string | null;
+        created_datetime_utc: string;
+    };
+};
+
+type GalleryClientProps = {
+    userEmail: string;
+};
+
+const CAPTIONS_PER_SESSION = 10;
+
+function shuffleItems<T>(items: T[]): T[] {
+    const shuffled = [...items];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
+function hasDisplayableCaption(
+    item: Pick<CaptionSessionItem, 'imageUrl' | 'caption'>
+): boolean {
+    const imageUrl = item.imageUrl?.trim();
+    const captionContent = item.caption.content?.trim();
+    return Boolean(imageUrl && captionContent);
+}
+
+export function GalleryClient({ userEmail }: GalleryClientProps) {
+    const router = useRouter();
+    const seenCaptionIdsRef = useRef<Set<string>>(new Set());
+    const fetchMoreCaptionsRef = useRef<(() => Promise<void>) | null>(null);
+    const [captionItems, setCaptionItems] = useState<CaptionSessionItem[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [signingOut, setSigningOut] = useState(false);
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [authChecked, setAuthChecked] = useState(false);
+    const [userId, setUserId] = useState<string | null>(null);
+    const [voteSaving, setVoteSaving] = useState(false);
+    const [voteError, setVoteError] = useState<string | null>(null);
+    const [votesByCaption, setVotesByCaption] = useState<Record<string, number>>({});
+    const [spotlight, setSpotlight] = useState({ x: 50, y: 50, active: false });
+
+    const currentItem = captionItems[currentIndex] ?? null;
+    const nextItem = captionItems[currentIndex + 1] ?? null;
+    const isLastCaption = currentIndex >= captionItems.length - 1;
+    const selectedVote = currentItem
+        ? votesByCaption[currentItem.caption.id] ?? null
+        : null;
+    const canVote = authChecked && !!userId;
+
+    const preloadImageUrl = useMemo(() => {
+        if (!currentItem || !nextItem) {
+            return null;
+        }
+        if (!nextItem.imageUrl || nextItem.imageUrl === currentItem.imageUrl) {
+            return null;
+        }
+        return nextItem.imageUrl;
+    }, [currentItem, nextItem]);
+
+    useEffect(() => {
+        let isMounted = true;
+        let activeUserId: string | null = null;
+
+        const fetchVotesForCaptionIds = async (
+            profileId: string,
+            captionIds: string[]
+        ) => {
+            if (captionIds.length === 0) {
+                return;
+            }
+
+            const { data, error: votesError } = await supabase
+                .from('caption_votes')
+                .select('caption_id, vote_value')
+                .eq('profile_id', profileId)
+                .in('caption_id', captionIds);
+
+            if (!isMounted || votesError) {
+                return;
+            }
+
+            const mappedVotes: Record<string, number> = {};
+            for (const row of data ?? []) {
+                mappedVotes[row.caption_id] = row.vote_value;
+            }
+            setVotesByCaption((prev) => ({
+                ...prev,
+                ...mappedVotes,
+            }));
+        };
+
+        const fetchUser = async () => {
+            const { data, error: userError } = await supabase.auth.getUser();
+
+            if (!isMounted) {
+                return null;
+            }
+
+            if (userError) {
+                setUserId(null);
+                setAuthChecked(true);
+                return null;
+            }
+
+            const id = data.user?.id ?? null;
+            activeUserId = id;
+            setUserId(id);
+            setAuthChecked(true);
+            return id;
+        };
+
+        const fetchImages = async (
+            profileId: string | null,
+            reset: boolean
+        ) => {
+            const oneWeekAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            const { data, error: queryError } = await supabase
+                .from('images')
+                .select(
+                    'id, url, created_datetime_utc, captions ( id, content, created_datetime_utc )'
+                )
+                .order('created_datetime_utc', { ascending: false });
+
+            if (!isMounted) {
+                return;
+            }
+
+            if (queryError) {
+                setError(queryError.message);
+                setCaptionItems([]);
+                setVotesByCaption({});
+                setLoading(false);
+                return;
+            }
+
+            const rows = (data ?? []) as Image[];
+            const normalized = rows.map((image) => ({
+                ...image,
+                captions: Array.isArray(image.captions)
+                    ? [...image.captions].sort(
+                          (a, b) =>
+                              Date.parse(b.created_datetime_utc) -
+                              Date.parse(a.created_datetime_utc)
+                      )
+                    : [],
+            }));
+
+            const filtered = normalized.filter((image) => image.captions.length > 0);
+            const sortedImages = filtered.sort((a, b) => {
+                const aLatest =
+                    a.captions.length > 0
+                        ? Date.parse(a.captions[0].created_datetime_utc)
+                        : 0;
+                const bLatest =
+                    b.captions.length > 0
+                        ? Date.parse(b.captions[0].created_datetime_utc)
+                        : 0;
+                return bLatest - aLatest;
+            });
+
+            const sessionCaptions = shuffleItems(
+                sortedImages
+                    .flatMap((image) =>
+                        image.captions.map((caption) => ({
+                            imageId: image.id,
+                            imageUrl: image.url,
+                            caption,
+                        }))
+                    )
+                    .filter(hasDisplayableCaption)
+                    .filter((item) => {
+                        const captionCreatedMs = Date.parse(
+                            item.caption.created_datetime_utc
+                        );
+                        return (
+                            Number.isFinite(captionCreatedMs) &&
+                            captionCreatedMs >= oneWeekAgoMs
+                        );
+                    })
+            );
+
+            if (reset) {
+                const initialBatch = sessionCaptions.slice(0, CAPTIONS_PER_SESSION);
+                seenCaptionIdsRef.current = new Set(
+                    initialBatch.map((item) => item.caption.id)
+                );
+                setCaptionItems(initialBatch);
+                setCurrentIndex(0);
+                if (profileId) {
+                    await fetchVotesForCaptionIds(
+                        profileId,
+                        initialBatch.map((item) => item.caption.id)
+                    );
+                } else {
+                    setVotesByCaption({});
+                }
+                setError(null);
+                setLoading(false);
+                return;
+            }
+
+            const unseenCaptions = sessionCaptions.filter(
+                (item) => !seenCaptionIdsRef.current.has(item.caption.id)
+            );
+            const nextBatch = unseenCaptions.slice(0, CAPTIONS_PER_SESSION);
+
+            if (nextBatch.length > 0) {
+                for (const item of nextBatch) {
+                    seenCaptionIdsRef.current.add(item.caption.id);
+                }
+                setCaptionItems((prev) => [...prev, ...nextBatch]);
+                if (profileId) {
+                    await fetchVotesForCaptionIds(
+                        profileId,
+                        nextBatch.map((item) => item.caption.id)
+                    );
+                }
+            }
+
+            setError(null);
+            setLoading(false);
+        };
+
+        fetchMoreCaptionsRef.current = async () => {
+            await fetchImages(activeUserId, false);
+        };
+
+        const bootstrap = async () => {
+            const profileId = await fetchUser();
+            await fetchImages(profileId, true);
+        };
+
+        bootstrap();
+
+        const channel = supabase
+            .channel('images-captions-live')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'images' },
+                () => {
+                    fetchImages(activeUserId, false);
+                }
+            )
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'captions' },
+                () => {
+                    fetchImages(activeUserId, false);
+                }
+            )
+            .subscribe();
+
+        const pollId = window.setInterval(() => {
+            fetchImages(activeUserId, false);
+        }, 15000);
+
+        return () => {
+            isMounted = false;
+            window.clearInterval(pollId);
+            supabase.removeChannel(channel);
+        };
+    }, []);
+
+    const handleSignOut = async () => {
+        setSigningOut(true);
+        const { error: signOutError } = await supabase.auth.signOut();
+
+        if (signOutError) {
+            setError(signOutError.message);
+            setSigningOut(false);
+            return;
+        }
+
+        router.push('/login');
+        router.refresh();
+    };
+
+    const goToNextCaption = () => {
+        setVoteError(null);
+        const nextIndex = currentIndex < captionItems.length ? currentIndex + 1 : currentIndex;
+        setCurrentIndex(nextIndex);
+        if (captionItems.length - nextIndex <= 2) {
+            void fetchMoreCaptionsRef.current?.();
+        }
+    };
+
+    const goToPreviousCaption = () => {
+        setVoteError(null);
+        setCurrentIndex((prev) => (prev > 0 ? prev - 1 : 0));
+    };
+
+    const voteOnCaption = async (captionId: string, voteValue: 1 | -1) => {
+        setVoteError(null);
+        setVoteSaving(true);
+
+        try {
+            const {
+                data: { user },
+                error: userError,
+            } = await supabase.auth.getUser();
+            if (userError) {
+                throw userError;
+            }
+            if (!user) {
+                throw new Error('Not signed in');
+            }
+
+            setUserId(user.id);
+
+            const { data: existing, error: selectError } = await supabase
+                .from('caption_votes')
+                .select('id, vote_value')
+                .eq('profile_id', user.id)
+                .eq('caption_id', captionId)
+                .maybeSingle();
+
+            if (selectError) {
+                throw selectError;
+            }
+
+            const nowISO = new Date().toISOString();
+
+            if (existing?.id) {
+                const { error: updateError } = await supabase
+                    .from('caption_votes')
+                    .update({
+                        vote_value: voteValue,
+                        modified_datetime_utc: nowISO,
+                    })
+                    .eq('id', existing.id);
+
+                if (updateError) {
+                    throw updateError;
+                }
+            } else {
+                const { error: insertError } = await supabase
+                    .from('caption_votes')
+                    .insert({
+                        profile_id: user.id,
+                        caption_id: captionId,
+                        vote_value: voteValue,
+                        created_datetime_utc: nowISO,
+                        modified_datetime_utc: nowISO,
+                    });
+
+                if (insertError) {
+                    throw insertError;
+                }
+            }
+
+            setVotesByCaption((prev) => ({
+                ...prev,
+                [captionId]: voteValue,
+            }));
+
+            goToNextCaption();
+        } catch (err) {
+            const message =
+                err instanceof Error ? err.message : 'Failed to save vote.';
+            if (message === 'Not signed in') {
+                setUserId(null);
+                setAuthChecked(true);
+                setVoteError('Sign in to vote.');
+            } else {
+                setVoteError(message);
+            }
+        } finally {
+            setVoteSaving(false);
+        }
+    };
+
+    return (
+        <main className="linear-page-bg min-h-screen px-4 py-10 text-[#EDEDEF] sm:px-8">
+            <div aria-hidden="true" className="linear-grid absolute inset-0 opacity-100" />
+            <div aria-hidden="true" className="linear-noise absolute inset-0 opacity-[0.015]" />
+            <div aria-hidden="true" className="ambient-blob ambient-blob-primary" />
+            <div aria-hidden="true" className="ambient-blob ambient-blob-secondary" />
+            <div aria-hidden="true" className="ambient-blob ambient-blob-tertiary" />
+            <div aria-hidden="true" className="ambient-blob ambient-blob-bottom" />
+            <div className="fixed right-4 top-4 z-20 flex items-center gap-2">
+                <Link
+                    href="/admin"
+                    className="inline-flex rounded-lg border border-[#5E6AD2]/50 bg-[#5E6AD2] px-4 py-2 text-sm font-semibold text-white shadow-[0_0_0_1px_rgba(94,106,210,0.5),0_4px_12px_rgba(94,106,210,0.3),inset_0_1px_0_rgba(255,255,255,0.2)] transition duration-200 ease-out hover:bg-[#6872D9]"
+                >
+                    Admin
+                </Link>
+                <details className="group relative">
+                    <summary
+                        className="inline-flex h-10 w-10 list-none items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[#EDEDEF] shadow-[0_2px_20px_rgba(0,0,0,0.45)] transition duration-200 ease-out hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5E6AD2]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#050506]"
+                        aria-label="Account"
+                    >
+                        <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="h-5 w-5"
+                        >
+                            <path d="M20 21a8 8 0 0 0-16 0" />
+                            <circle cx="12" cy="8" r="4" />
+                        </svg>
+                    </summary>
+                    <div className="linear-glass absolute right-0 mt-2 w-64 rounded-2xl p-4">
+                        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#8A8F98]">
+                            Signed in as
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-[#EDEDEF]">
+                            {userEmail || 'Unknown user'}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={handleSignOut}
+                            className="mt-4 w-full rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition duration-200 ease-out hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={signingOut}
+                        >
+                            Log out
+                        </button>
+                    </div>
+                </details>
+            </div>
+            <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-col gap-8">
+                <header className="space-y-3 pt-8 sm:pt-12">
+                    <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#8A8F98]">
+                        See what&apos;s cookin
+                    </p>
+                    <h1 className="bg-gradient-to-b from-white via-white/95 to-white/65 bg-clip-text font-[var(--font-playfair)] text-4xl font-semibold leading-tight tracking-tight text-transparent sm:text-5xl">
+                        Newest Crackd Captions 👩‍🍳
+                    </h1>
+                </header>
+
+                {loading && <p className="text-[#8A8F98]">Loading...</p>}
+                {error && !loading && (
+                    <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-rose-200">
+                        Error: {error}
+                    </p>
+                )}
+
+                {!loading && !error && (
+                    <section
+                        className="linear-glass relative overflow-hidden space-y-4 rounded-2xl p-4 pb-24 sm:p-6 sm:pb-24"
+                        onMouseMove={(event) => {
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const x = ((event.clientX - rect.left) / rect.width) * 100;
+                            const y = ((event.clientY - rect.top) / rect.height) * 100;
+                            setSpotlight({ x, y, active: true });
+                        }}
+                        onMouseLeave={() =>
+                            setSpotlight((prev) => ({ ...prev, active: false }))
+                        }
+                    >
+                        <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-0 transition-opacity duration-300 ease-out"
+                            style={{
+                                opacity: spotlight.active ? 1 : 0,
+                                background: `radial-gradient(300px circle at ${spotlight.x}% ${spotlight.y}%, rgba(94,106,210,0.16), transparent 60%)`,
+                            }}
+                        />
+                        {currentItem?.imageUrl && (
+                            <img
+                                src={currentItem.imageUrl}
+                                alt=""
+                                className="relative z-10 h-auto w-full rounded-xl border border-white/10"
+                            />
+                        )}
+
+                        {preloadImageUrl && (
+                            <img
+                                src={preloadImageUrl}
+                                alt=""
+                                aria-hidden="true"
+                                className="hidden"
+                            />
+                        )}
+
+                        {captionItems.length === 0 && (
+                            <p className="text-[#8A8F98]">No captions available yet.</p>
+                        )}
+
+                        {!currentItem && captionItems.length > 0 && (
+                            <>
+                                <p className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-lg text-[#EDEDEF]">
+                                    You&apos;re done.
+                                </p>
+                                <div className="flex flex-wrap gap-3 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={goToPreviousCaption}
+                                        className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition duration-200 ease-out hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                                        disabled={currentIndex === 0 || voteSaving}
+                                    >
+                                        Back
+                                    </button>
+                                </div>
+                            </>
+                        )}
+
+                        {currentItem && (
+                            <>
+                                <p className="font-mono text-xs tracking-widest text-[#8A8F98]">
+                                    Caption {currentIndex + 1} of {captionItems.length}
+                                </p>
+                                <p className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-lg text-[#EDEDEF]">
+                                    {currentItem.caption.content}
+                                </p>
+
+                                {!canVote && (
+                                    <p className="text-sm text-[#8A8F98]">
+                                        Sign in to vote.{' '}
+                                        <a
+                                            href="/login"
+                                            className="font-semibold text-[#EDEDEF] underline decoration-[#5E6AD2]/70 underline-offset-2"
+                                        >
+                                            Go to login
+                                        </a>
+                                    </p>
+                                )}
+
+                                <div className="space-y-3 pt-1">
+                                    <div className="flex w-full items-center justify-center gap-8">
+                                        <button
+                                            type="button"
+                                            onClick={() => voteOnCaption(currentItem.caption.id, 1)}
+                                            aria-label="Upvote"
+                                            className={`inline-flex h-24 w-72 max-w-[45%] items-center justify-center rounded-xl border px-4 text-5xl leading-none transition duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-60 ${
+                                                selectedVote === 1
+                                                    ? 'border border-[#5E6AD2]/50 bg-[#5E6AD2] text-white shadow-[0_0_0_1px_rgba(94,106,210,0.5),0_4px_12px_rgba(94,106,210,0.3),inset_0_1px_0_rgba(255,255,255,0.2)]'
+                                                    : 'border border-white/10 bg-white/[0.04] text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] hover:border-white/20 hover:bg-white/[0.08]'
+                                            }`}
+                                            disabled={!canVote || voteSaving}
+                                        >
+                                            <svg
+                                                aria-hidden="true"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                strokeWidth="1.9"
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                className="h-10 w-10"
+                                            >
+                                                <path d="M7 10v10" />
+                                                <path d="M11 20h7.2a2 2 0 0 0 2-1.6l1-5a2 2 0 0 0-2-2.4h-4.1l.7-3.2a2 2 0 0 0-2-2.4H12l-3 4.6V20" />
+                                                <path d="M3 10h4v10H3z" />
+                                            </svg>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => voteOnCaption(currentItem.caption.id, -1)}
+                                            aria-label="Downvote"
+                                            className={`inline-flex h-24 w-72 max-w-[45%] items-center justify-center rounded-xl border px-4 text-5xl leading-none transition duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-60 ${
+                                                selectedVote === -1
+                                                    ? 'border border-white/20 bg-white/[0.14] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_4px_14px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.2)]'
+                                                    : 'border border-white/10 bg-white/[0.04] text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] hover:border-white/20 hover:bg-white/[0.08]'
+                                            }`}
+                                            disabled={!canVote || voteSaving}
+                                        >
+                                            <svg
+                                                aria-hidden="true"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                strokeWidth="1.9"
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                className="h-10 w-10"
+                                            >
+                                                <path d="M17 14V4" />
+                                                <path d="M13 4H5.8a2 2 0 0 0-2 1.6l-1 5A2 2 0 0 0 4.8 13h4.1l-.7 3.2a2 2 0 0 0 2 2.4H12l3-4.6V4" />
+                                                <path d="M21 4h-4v10h4z" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div className="absolute bottom-4 left-4 right-4 flex w-auto items-center sm:bottom-6 sm:left-6 sm:right-6">
+                                        <button
+                                            type="button"
+                                            onClick={goToPreviousCaption}
+                                            className="mr-auto rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition duration-200 ease-out hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                                            disabled={currentIndex === 0 || voteSaving}
+                                        >
+                                            Back
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={goToNextCaption}
+                                            className="ml-auto rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition duration-200 ease-out hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                                            disabled={isLastCaption || voteSaving}
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {voteError && (
+                                    <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                                        {voteError}
+                                    </p>
+                                )}
+                            </>
+                        )}
+                    </section>
+                )}
+            </div>
+        </main>
+    );
+}
