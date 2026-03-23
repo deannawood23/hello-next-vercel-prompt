@@ -55,11 +55,11 @@ export default async function LoginPage() {
     if (user) {
         const { data: profile } = await supabase
             .from('profiles')
-            .select('is_superadmin')
+            .select('is_superadmin, is_matrix_admin')
             .eq('id', user.id)
             .maybeSingle();
 
-        if (profile?.is_superadmin === true) {
+        if (profile?.is_superadmin === true || profile?.is_matrix_admin === true) {
             redirect('/admin');
         }
 
@@ -79,7 +79,7 @@ export default async function LoginPage() {
                 <div className="linear-glass relative z-10 w-full rounded-2xl p-6 sm:p-8">
                     <div className="space-y-4 text-center">
                         <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#8A8F98]">
-                            Superadmins Only
+                            Admin Access Only
                         </p>
                         <h1 className="flex items-center justify-center gap-2 bg-gradient-to-b from-white via-white/95 to-white/65 bg-clip-text font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-transparent sm:text-4xl">
                         SIGN IN TO GET CRACKD

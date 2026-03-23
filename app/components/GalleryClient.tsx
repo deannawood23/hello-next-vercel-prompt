@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 
 import Link from 'next/link';
@@ -27,7 +28,7 @@ type CaptionSessionItem = {
 };
 
 type GalleryClientProps = {
-    userEmail: string;
+    userEmail?: string;
 };
 
 const CAPTIONS_PER_SESSION = 10;

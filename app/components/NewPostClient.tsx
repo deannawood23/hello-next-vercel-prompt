@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 
 import Link from 'next/link';
@@ -97,11 +98,7 @@ function parseCaptionList(data: unknown): string[] {
     return captions;
 }
 
-type NewPostClientProps = {
-    userEmail: string;
-};
-
-export function NewPostClient({ userEmail }: NewPostClientProps) {
+export function NewPostClient() {
     const router = useRouter();
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);

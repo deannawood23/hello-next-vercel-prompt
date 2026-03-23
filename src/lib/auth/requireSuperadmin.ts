@@ -6,7 +6,7 @@ export async function requireSuperadmin() {
 
     const { data: profile, error } = await supabase
         .from('profiles')
-        .select('id, is_superadmin')
+        .select('id, is_superadmin, is_matrix_admin')
         .eq('id', user.id)
         .maybeSingle();
 
@@ -14,7 +14,7 @@ export async function requireSuperadmin() {
         redirect('/login');
     }
 
-    if (profile?.is_superadmin !== true) {
+    if (profile?.is_superadmin !== true && profile?.is_matrix_admin !== true) {
         redirect('/protected');
     }
 

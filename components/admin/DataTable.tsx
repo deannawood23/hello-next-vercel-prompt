@@ -19,9 +19,9 @@ export function DataTable({
     nonLinkColumns = [],
 }: DataTableProps) {
     return (
-        <div className="overflow-x-auto rounded-xl border border-white/10 bg-white/[0.03]">
+        <div className="overflow-x-auto rounded-xl border border-[var(--admin-border)] bg-[var(--admin-panel)]">
             <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-white/10 bg-white/[0.04] text-xs uppercase tracking-[0.14em] text-[#8A8F98]">
+                <thead className="border-b border-[var(--admin-border)] bg-[var(--admin-panel-strong)] text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
                     <tr>
                         {columns.map((column) => (
                             <th key={column} className="px-4 py-3 font-medium">
@@ -33,7 +33,7 @@ export function DataTable({
                 <tbody>
                     {rows.length === 0 ? (
                         <tr>
-                            <td colSpan={columns.length} className="px-4 py-5 text-[#A6ACB6]">
+                            <td colSpan={columns.length} className="px-4 py-5 text-[var(--admin-muted)]">
                                 {emptyMessage}
                             </td>
                         </tr>
@@ -41,10 +41,10 @@ export function DataTable({
                         rows.map((cells, index) => (
                             <tr
                                 key={`row-${index}`}
-                                className={`border-b border-white/5 last:border-b-0 ${rowClassName}`.trim()}
+                                className={`border-b border-[var(--admin-border)] last:border-b-0 ${rowClassName}`.trim()}
                             >
                                 {cells.map((cell, cellIndex) => (
-                                    <td key={`cell-${index}-${cellIndex}`} className="px-4 py-3 align-top text-[#D4D8DF]">
+                                    <td key={`cell-${index}-${cellIndex}`} className="px-4 py-3 align-top text-[var(--admin-text)]">
                                         {rowHrefs?.[index] && !nonLinkColumns.includes(cellIndex) ? (
                                             <Link
                                                 href={rowHrefs[index]}

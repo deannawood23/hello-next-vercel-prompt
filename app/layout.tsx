@@ -24,10 +24,31 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${manrope.variable} ${playfairDisplay.variable} antialiased`}
       >
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (() => {
+                const storageKey = 'almostcrackd-theme';
+                const root = document.documentElement;
+                const media = window.matchMedia('(prefers-color-scheme: dark)');
+                const stored = window.localStorage.getItem(storageKey);
+                const preference = stored === 'light' || stored === 'dark' || stored === 'system'
+                  ? stored
+                  : 'system';
+                const resolved = preference === 'system'
+                  ? (media.matches ? 'dark' : 'light')
+                  : preference;
+                root.dataset.themePreference = preference;
+                root.dataset.theme = resolved;
+                root.style.colorScheme = resolved;
+              })();
+            `,
+          }}
+        />
         <AppShell />
         <div className="pt-[72px]">{children}</div>
       </body>

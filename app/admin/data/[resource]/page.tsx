@@ -234,9 +234,16 @@ export default async function AdminResourcePage({
 }) {
     const { resource } = await params;
     const resolvedSearchParams = searchParams ? await searchParams : undefined;
+    const currentResource = String(resource);
     const config = RESOURCE_CONFIG[resource];
     if (!config) {
         notFound();
+    }
+
+    const isHumorFlavorsResource = resource === 'humor-flavors';
+
+    if (!isHumorFlavorsResource) {
+        redirect('/admin/data/humor-flavors');
     }
 
     async function createRow(formData: FormData) {
@@ -288,7 +295,7 @@ export default async function AdminResourcePage({
     async function saveCaptionExample(formData: FormData) {
         'use server';
 
-        if (resource !== 'caption-examples') {
+        if (currentResource !== 'caption-examples') {
             return;
         }
 
@@ -334,7 +341,7 @@ export default async function AdminResourcePage({
     async function saveTerm(formData: FormData) {
         'use server';
 
-        if (resource !== 'terms') {
+        if (currentResource !== 'terms') {
             return;
         }
 
@@ -380,11 +387,11 @@ export default async function AdminResourcePage({
     async function deleteTerm(formData: FormData) {
         'use server';
 
-        if (resource !== 'terms') {
+        if (currentResource !== 'terms') {
             return;
         }
 
-        const { supabase, profile } = await requireSuperadmin();
+        const { supabase } = await requireSuperadmin();
         const termId = String(formData.get('id') ?? '').trim();
         if (!termId) {
             return;
@@ -399,7 +406,7 @@ export default async function AdminResourcePage({
     async function saveLlmModel(formData: FormData) {
         'use server';
 
-        if (resource !== 'llm-models') {
+        if (currentResource !== 'llm-models') {
             return;
         }
 
@@ -444,11 +451,11 @@ export default async function AdminResourcePage({
     async function deleteLlmModel(formData: FormData) {
         'use server';
 
-        if (resource !== 'llm-models') {
+        if (currentResource !== 'llm-models') {
             return;
         }
 
-        const { supabase, profile } = await requireSuperadmin();
+        const { supabase } = await requireSuperadmin();
         const modelId = String(formData.get('id') ?? '').trim();
         if (!modelId) {
             return;
@@ -463,7 +470,7 @@ export default async function AdminResourcePage({
     async function saveLlmProvider(formData: FormData) {
         'use server';
 
-        if (resource !== 'llm-providers') {
+        if (currentResource !== 'llm-providers') {
             return;
         }
 
@@ -496,11 +503,11 @@ export default async function AdminResourcePage({
     async function deleteLlmProvider(formData: FormData) {
         'use server';
 
-        if (resource !== 'llm-providers') {
+        if (currentResource !== 'llm-providers') {
             return;
         }
 
-        const { supabase, profile } = await requireSuperadmin();
+        const { supabase } = await requireSuperadmin();
         const providerId = String(formData.get('id') ?? '').trim();
         if (!providerId) {
             return;
@@ -515,7 +522,7 @@ export default async function AdminResourcePage({
     async function addAllowedDomain(formData: FormData) {
         'use server';
 
-        if (resource !== 'allowed-signup-domains') {
+        if (currentResource !== 'allowed-signup-domains') {
             return;
         }
 
@@ -536,7 +543,7 @@ export default async function AdminResourcePage({
     async function saveAllowedDomain(formData: FormData) {
         'use server';
 
-        if (resource !== 'allowed-signup-domains') {
+        if (currentResource !== 'allowed-signup-domains') {
             return;
         }
 
@@ -560,11 +567,11 @@ export default async function AdminResourcePage({
     async function deleteAllowedDomain(formData: FormData) {
         'use server';
 
-        if (resource !== 'allowed-signup-domains') {
+        if (currentResource !== 'allowed-signup-domains') {
             return;
         }
 
-        const { supabase, profile } = await requireSuperadmin();
+        const { supabase } = await requireSuperadmin();
         const id = String(formData.get('id') ?? '').trim();
         if (!id) {
             return;
@@ -579,7 +586,7 @@ export default async function AdminResourcePage({
     async function addWhitelistedEmail(formData: FormData) {
         'use server';
 
-        if (resource !== 'whitelisted-email-addresses') {
+        if (currentResource !== 'whitelisted-email-addresses') {
             return;
         }
 
@@ -600,7 +607,7 @@ export default async function AdminResourcePage({
     async function saveWhitelistedEmail(formData: FormData) {
         'use server';
 
-        if (resource !== 'whitelisted-email-addresses') {
+        if (currentResource !== 'whitelisted-email-addresses') {
             return;
         }
 
@@ -624,7 +631,7 @@ export default async function AdminResourcePage({
     async function deleteWhitelistedEmail(formData: FormData) {
         'use server';
 
-        if (resource !== 'whitelisted-email-addresses') {
+        if (currentResource !== 'whitelisted-email-addresses') {
             return;
         }
 
@@ -643,7 +650,7 @@ export default async function AdminResourcePage({
     async function addHumorFlavorToMix(formData: FormData) {
         'use server';
 
-        if (resource !== 'humor-mix') {
+        if (currentResource !== 'humor-mix') {
             return;
         }
 
@@ -671,7 +678,7 @@ export default async function AdminResourcePage({
     async function updateHumorFlavorMix(formData: FormData) {
         'use server';
 
-        if (resource !== 'humor-mix') {
+        if (currentResource !== 'humor-mix') {
             return;
         }
 
@@ -694,7 +701,7 @@ export default async function AdminResourcePage({
     async function removeHumorFlavorFromMix(formData: FormData) {
         'use server';
 
-        if (resource !== 'humor-mix') {
+        if (currentResource !== 'humor-mix') {
             return;
         }
 
@@ -713,7 +720,7 @@ export default async function AdminResourcePage({
     async function saveHumorFlavor(formData: FormData) {
         'use server';
 
-        if (resource !== 'humor-flavors') {
+        if (currentResource !== 'humor-flavors') {
             return;
         }
 
@@ -748,10 +755,47 @@ export default async function AdminResourcePage({
         redirect('/admin/data/humor-flavors');
     }
 
+    async function createHumorFlavor(formData: FormData) {
+        'use server';
+
+        if (currentResource !== 'humor-flavors') {
+            return;
+        }
+
+        const { supabase, profile } = await requireSuperadmin();
+        const slug = String(formData.get('slug') ?? '').trim();
+        const description = String(formData.get('description') ?? '').trim();
+        const themes = String(formData.get('themes') ?? '')
+            .split('\n')
+            .map((value) => value.trim())
+            .filter(Boolean);
+
+        if (!slug) {
+            return;
+        }
+
+        await supabase
+            .from('humor_flavors')
+            .insert(
+                withInsertAuditFields(
+                    {
+                        slug,
+                        description,
+                        themes,
+                    },
+                    profile.id
+                )
+            );
+
+        revalidatePath('/admin/data/humor-flavors');
+        revalidatePath('/admin');
+        redirect('/admin/data/humor-flavors');
+    }
+
     async function duplicateHumorFlavor(formData: FormData) {
         'use server';
 
-        if (resource !== 'humor-flavors') {
+        if (currentResource !== 'humor-flavors') {
             return;
         }
 
@@ -791,7 +835,7 @@ export default async function AdminResourcePage({
     async function deleteHumorFlavor(formData: FormData) {
         'use server';
 
-        if (resource !== 'humor-flavors') {
+        if (currentResource !== 'humor-flavors') {
             return;
         }
 
@@ -836,7 +880,7 @@ export default async function AdminResourcePage({
     const { supabase } = await requireSuperadmin();
     const { rows: data, error } = await fetchTableRows(supabase, config.table);
 
-    if (resource === 'caption-requests') {
+    if (currentResource === 'caption-requests') {
         const imageIds = Array.from(
             new Set(
                 data
@@ -963,8 +1007,9 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'humor-flavors') {
+    if (currentResource === 'humor-flavors') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
+        const isCreating = String(resolvedSearchParams?.create ?? '').trim() === '1';
         const editResult = editId
             ? await supabase
                   .from('humor_flavors')
@@ -1039,11 +1084,19 @@ export default async function AdminResourcePage({
 
         return (
             <div className="space-y-4">
-                <div>
-                    <h2 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
-                        {config.title}
-                    </h2>
-                    <p className="mt-1 text-sm text-[#A6ACB6]">{config.description}</p>
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                    <div>
+                        <h2 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
+                            {config.title}
+                        </h2>
+                        <p className="mt-1 text-sm text-[#A6ACB6]">{config.description}</p>
+                    </div>
+                    <Link
+                        href="/admin/data/humor-flavors?create=1"
+                        className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
+                    >
+                        Create Flavor
+                    </Link>
                     {error ? (
                         <p className="mt-2 rounded-lg border border-amber-400/25 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
                             Query warning: {error}
@@ -1130,11 +1183,67 @@ export default async function AdminResourcePage({
                         </div>
                     </div>
                 ) : null}
+
+                {isCreating ? (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8 backdrop-blur-sm">
+                        <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/10 bg-[#111318] p-6 shadow-2xl">
+                            <div>
+                                <h3 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
+                                    Create Humor Flavor
+                                </h3>
+                            </div>
+
+                            <form action={createHumorFlavor} className="mt-6 space-y-5">
+                                <label className="block space-y-2">
+                                    <span className="text-sm font-semibold text-[#EDEDEF]">Slug</span>
+                                    <input
+                                        type="text"
+                                        name="slug"
+                                        className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none placeholder:text-[#7E8590] focus:border-[#5E6AD2]/70"
+                                    />
+                                </label>
+
+                                <label className="block space-y-2">
+                                    <span className="text-sm font-semibold text-[#EDEDEF]">Description</span>
+                                    <textarea
+                                        name="description"
+                                        rows={5}
+                                        className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none placeholder:text-[#7E8590] focus:border-[#5E6AD2]/70"
+                                    />
+                                </label>
+
+                                <label className="block space-y-2">
+                                    <span className="text-sm font-semibold text-[#EDEDEF]">Themes</span>
+                                    <textarea
+                                        name="themes"
+                                        rows={5}
+                                        className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none placeholder:text-[#7E8590] focus:border-[#5E6AD2]/70"
+                                    />
+                                </label>
+
+                                <div className="flex items-center justify-end gap-3 pt-2">
+                                    <Link
+                                        href="/admin/data/humor-flavors"
+                                        className="inline-flex rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#D4D8DF] transition hover:bg-white/[0.08]"
+                                    >
+                                        Cancel
+                                    </Link>
+                                    <button
+                                        type="submit"
+                                        className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
+                                    >
+                                        Create Flavor
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                ) : null}
             </div>
         );
     }
 
-    if (resource === 'humor-mix') {
+    if (currentResource === 'humor-mix') {
         const query = String(resolvedSearchParams?.q ?? '').trim().toLowerCase();
         const [mixResult, flavorsResult] = await Promise.all([
             supabase.from('humor_flavor_mix').select('*').order('created_datetime_utc', { ascending: false }),
@@ -1310,7 +1419,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'terms') {
+    if (currentResource === 'terms') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const isCreating = String(resolvedSearchParams?.create ?? '').trim() === '1';
         const query = String(resolvedSearchParams?.q ?? '').trim();
@@ -1579,7 +1688,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'llm-prompt-chains') {
+    if (currentResource === 'llm-prompt-chains') {
         const query = String(resolvedSearchParams?.q ?? '').trim();
         const requestedPage = Number.parseInt(String(resolvedSearchParams?.page ?? '1'), 10);
         const currentPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -1758,7 +1867,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'llm-model-responses') {
+    if (currentResource === 'llm-model-responses') {
         const query = String(resolvedSearchParams?.q ?? '').trim();
         const requestedPage = Number.parseInt(String(resolvedSearchParams?.page ?? '1'), 10);
         const currentPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -1951,7 +2060,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'llm-models') {
+    if (currentResource === 'llm-models') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const isCreating = String(resolvedSearchParams?.create ?? '').trim() === '1';
         const [editResult, providersResult] = await Promise.all([
@@ -2149,7 +2258,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'llm-providers') {
+    if (currentResource === 'llm-providers') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const isCreating = String(resolvedSearchParams?.create ?? '').trim() === '1';
         const editResult = editId
@@ -2266,7 +2375,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'allowed-signup-domains') {
+    if (currentResource === 'allowed-signup-domains') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const editResult = editId
             ? await supabase
@@ -2392,7 +2501,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'whitelisted-email-addresses') {
+    if (currentResource === 'whitelisted-email-addresses') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const editResult = editId
             ? await supabase
@@ -2521,7 +2630,7 @@ export default async function AdminResourcePage({
         );
     }
 
-    if (resource === 'caption-examples') {
+    if (currentResource === 'caption-examples') {
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const isCreating = String(resolvedSearchParams?.create ?? '').trim() === '1';
         const editResult = editId

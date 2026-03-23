@@ -28,10 +28,10 @@ export default async function ProtectedPage() {
                             Restricted Access
                         </p>
                         <h1 className="bg-gradient-to-b from-white via-white/95 to-white/65 bg-clip-text font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-transparent sm:text-4xl">
-                            Superadmin access required
+                            Admin access required
                         </h1>
                         <p className="text-sm text-[#A6ACB6]">
-                            Signed in as <span className="font-semibold text-[#EDEDEF]">{user.email}</span>, but this account does not have superadmin permissions.
+                            Signed in as <span className="font-semibold text-[#EDEDEF]">{user.email}</span>, but this account does not have `is_superadmin` or `is_matrix_admin` access.
                         </p>
                         <div className="h-px w-full bg-gradient-to-r from-transparent via-white/15 to-transparent" />
                     </div>

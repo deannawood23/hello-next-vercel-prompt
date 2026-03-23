@@ -16,6 +16,59 @@
   --ls-border: rgba(255, 255, 255, 0.06);
   --ls-border-hover: rgba(255, 255, 255, 0.1);
   --ls-border-accent: rgba(94, 106, 210, 0.3);
+  --admin-shell: rgba(9, 9, 13, 0.95);
+  --admin-header: rgba(7, 7, 11, 0.85);
+  --admin-panel: rgba(255, 255, 255, 0.03);
+  --admin-panel-strong: rgba(0, 0, 0, 0.2);
+  --admin-text: #edefef;
+  --admin-muted: #a6acb6;
+  --admin-subtle: #8a8f98;
+  --admin-border: rgba(255, 255, 255, 0.1);
+  --admin-input-bg: rgba(0, 0, 0, 0.2);
+  --admin-danger-bg: rgba(251, 113, 133, 0.15);
+  --admin-danger-border: rgba(251, 113, 133, 0.4);
+  --admin-danger-text: #fecdd3;
+}
+
+:root[data-theme='light'] {
+  --background: #eef2f7;
+  --foreground: #0f172a;
+  --ls-bg-deep: #dfe6f0;
+  --ls-bg-base: #eef2f7;
+  --ls-bg-elevated: #ffffff;
+  --ls-surface: rgba(255, 255, 255, 0.82);
+  --ls-surface-hover: rgba(255, 255, 255, 0.94);
+  --ls-foreground: #0f172a;
+  --ls-foreground-muted: #334155;
+  --ls-accent: #2953d4;
+  --ls-accent-bright: #1f46c7;
+  --ls-accent-glow: rgba(41, 83, 212, 0.18);
+  --ls-border: rgba(20, 32, 51, 0.1);
+  --ls-border-hover: rgba(20, 32, 51, 0.18);
+  --ls-border-accent: rgba(41, 83, 212, 0.28);
+  --admin-shell: rgba(255, 255, 255, 0.88);
+  --admin-header: rgba(255, 255, 255, 0.75);
+  --admin-panel: rgba(255, 255, 255, 0.76);
+  --admin-panel-strong: rgba(255, 255, 255, 0.9);
+  --admin-text: #0f172a;
+  --admin-muted: #334155;
+  --admin-subtle: #475569;
+  --admin-border: rgba(20, 32, 51, 0.1);
+  --admin-input-bg: rgba(255, 255, 255, 0.95);
+  --admin-danger-bg: rgba(225, 29, 72, 0.08);
+  --admin-danger-border: rgba(225, 29, 72, 0.2);
+  --admin-danger-text: #be123c;
+}
+
+:root[data-theme='light'] .text-\[\#EDEDEF\],
+:root[data-theme='light'] .text-\[\#D4D8DF\] {
+  color: #0f172a !important;
+}
+
+:root[data-theme='light'] .text-\[\#A6ACB6\],
+:root[data-theme='light'] .text-\[\#8A8F98\],
+:root[data-theme='light'] .text-\[\#7E8590\] {
+  color: #475569 !important;
 }
 
 @theme inline {
@@ -28,7 +81,7 @@
 body {
   background: radial-gradient(
     ellipse at top,
-    #0a0a0f 0%,
+    color-mix(in srgb, var(--ls-accent) 12%, var(--ls-bg-base)) 0%,
     var(--ls-bg-base) 50%,
     var(--ls-bg-deep) 100%
   );
@@ -42,7 +95,7 @@ body {
   overflow: hidden;
   background: radial-gradient(
     ellipse at top,
-    #0a0a0f 0%,
+    color-mix(in srgb, var(--ls-accent) 12%, var(--ls-bg-base)) 0%,
     var(--ls-bg-base) 50%,
     var(--ls-bg-deep) 100%
   );
@@ -50,13 +103,13 @@ body {
 
 .linear-grid {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    linear-gradient(color-mix(in srgb, var(--ls-foreground) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ls-foreground) 6%, transparent) 1px, transparent 1px);
   background-size: 64px 64px;
 }
 
 .linear-noise {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 0.5px, transparent 0.5px);
+  background-image: radial-gradient(color-mix(in srgb, var(--ls-foreground) 8%, transparent) 0.5px, transparent 0.5px);
   background-size: 3px 3px;
 }
 
@@ -127,12 +180,12 @@ body {
 .linear-glass {
   border: 1px solid var(--ls-border);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
-    rgba(10, 10, 12, 0.7);
+    linear-gradient(180deg, color-mix(in srgb, white 14%, transparent), color-mix(in srgb, white 4%, transparent)),
+    color-mix(in srgb, var(--ls-bg-elevated) 78%, transparent);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 8px 34px rgba(0, 0, 0, 0.5),
-    0 0 70px rgba(94, 106, 210, 0.08);
+    0 0 0 1px color-mix(in srgb, var(--ls-foreground) 4%, transparent),
+    0 8px 34px color-mix(in srgb, black 20%, transparent),
+    0 0 70px color-mix(in srgb, var(--ls-accent) 12%, transparent);
   backdrop-filter: blur(10px);
 }
 

@@ -1,12 +1,18 @@
+/* eslint-disable @next/next/no-img-element */
 import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { notFound, redirect } from 'next/navigation';
+import { HumorFlavorTester } from '../../../../../components/admin/HumorFlavorTester';
+import { DataTable } from '../../../../../components/admin/DataTable';
 import { requireSuperadmin } from '../../../../../src/lib/auth/requireSuperadmin';
 import {
     asRecord,
+    formatDate,
+    pickDateValue,
     pickString,
     stripAuditFields,
     withInsertAuditFields,
+    withUpdateAuditFields,
 } from '../../../_lib';
 
 function pickNumber(row: Record<string, unknown>, keys: string[], fallback: number | null = null) {
@@ -43,98 +49,247 @@ function sortByLabel(left: Record<string, unknown>, right: Record<string, unknow
     return leftLabel.localeCompare(rightLabel);
 }
 
+function clampOrder(order: number, total: number) {
+    return Math.min(Math.max(order, 1), Math.max(total, 1));
+}
+
+async function fetchFlavor(
+    supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
+    flavorId: number | string
+) {
+    return supabase.from('humor_flavors').select('*').eq('id', flavorId).maybeSingle();
+}
+
+async function fetchOrderedSteps(
+    supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
+    flavorId: number | string
+) {
+    const result = await supabase
+        .from('humor_flavor_steps')
+        .select('*')
+        .eq('humor_flavor_id', flavorId)
+        .order('order_by', { ascending: true });
+
+    return (result.data ?? [])
+        .map((row) => asRecord(row))
+        .sort((left, right) => {
+            const leftOrder = pickNumber(left, ['order_by'], 0) ?? 0;
+            const rightOrder = pickNumber(right, ['order_by'], 0) ?? 0;
+            if (leftOrder === rightOrder) {
+                return (pickNumber(left, ['id'], 0) ?? 0) - (pickNumber(right, ['id'], 0) ?? 0);
+            }
+            return leftOrder - rightOrder;
+        });
+}
+
+async function persistStepOrder(
+    supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
+    profileId: string,
+    stepIds: number[]
+) {
+    await Promise.all(
+        stepIds.map((stepId, index) =>
+            supabase
+                .from('humor_flavor_steps')
+                .update(withUpdateAuditFields({ order_by: index + 1 }, profileId))
+                .eq('id', stepId)
+        )
+    );
+}
+
+async function resequenceFlavorSteps(
+    supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
+    profileId: string,
+    flavorId: number
+) {
+    const orderedSteps = await fetchOrderedSteps(supabase, flavorId);
+    const stepIds = orderedSteps
+        .map((step) => pickNumber(step, ['id'], null))
+        .filter((value): value is number => value !== null);
+    await persistStepOrder(supabase, profileId, stepIds);
+}
+
+async function fetchRecentPromptChains(
+    supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
+    flavorId: number
+) {
+    const queries = [
+        supabase
+            .from('llm_prompt_chains')
+            .select('*')
+            .eq('humor_flavor_id', flavorId)
+            .order('created_datetime_utc', { ascending: false })
+            .limit(10),
+        supabase
+            .from('llm_prompt_chains')
+            .select('*')
+            .eq('humor_flavor_id', flavorId)
+            .order('created_at', { ascending: false })
+            .limit(10),
+    ];
+
+    for (const query of queries) {
+        const result = await query;
+        if (!result.error) {
+            return (result.data ?? []).map((row) => asRecord(row));
+        }
+    }
+
+    return [];
+}
+
+async function fetchRecentCaptions(
+    supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
+    flavorId: number
+) {
+    const queries = [
+        supabase
+            .from('captions')
+            .select('*')
+            .eq('humor_flavor_id', flavorId)
+            .order('created_datetime_utc', { ascending: false })
+            .limit(12),
+        supabase
+            .from('captions')
+            .select('*')
+            .eq('humor_flavor_id', flavorId)
+            .order('created_at', { ascending: false })
+            .limit(12),
+    ];
+
+    for (const query of queries) {
+        const result = await query;
+        if (!result.error) {
+            return (result.data ?? []).map((row) => asRecord(row));
+        }
+    }
+
+    return [];
+}
+
 type ManageFlavorStepsPageProps = {
     params: Promise<{ id: string }>;
-    searchParams?: Promise<{ create?: string }>;
 };
 
 export default async function ManageFlavorStepsPage({
     params,
-    searchParams,
 }: ManageFlavorStepsPageProps) {
     const { id } = await params;
-    const resolvedSearchParams = searchParams ? await searchParams : undefined;
-    const flavorId = Number(id);
+    const numericFlavorId = Number.parseInt(id, 10);
+    const flavorId = Number.isNaN(numericFlavorId) ? id : numericFlavorId;
     const { supabase } = await requireSuperadmin();
 
-    const flavorResult = await supabase
-        .from('humor_flavors')
-        .select('*')
-        .eq('id', Number.isNaN(flavorId) ? id : flavorId)
-        .maybeSingle();
+    const flavorResult = await fetchFlavor(supabase, flavorId);
     if (!flavorResult.data) {
         notFound();
     }
 
     const flavor = asRecord(flavorResult.data);
+    const flavorNumericId = pickNumber(flavor, ['id'], numericFlavorId);
+    if (flavorNumericId === null) {
+        notFound();
+    }
+    const resolvedFlavorId = flavorNumericId;
+
     const flavorSlug = pickString(flavor, ['slug'], id);
+    const flavorDescription = pickString(flavor, ['description'], '');
+    const flavorThemes = Array.isArray(flavor.themes)
+        ? flavor.themes.map((value) => String(value)).filter(Boolean)
+        : [];
+
+    async function saveFlavor(formData: FormData) {
+        'use server';
+
+        const { supabase: actionSupabase, profile } = await requireSuperadmin();
+        const slug = String(formData.get('slug') ?? '').trim();
+        const description = String(formData.get('description') ?? '').trim();
+        const themes = String(formData.get('themes') ?? '')
+            .split('\n')
+            .map((value) => value.trim())
+            .filter(Boolean);
+
+        await actionSupabase
+            .from('humor_flavors')
+            .update(
+                withUpdateAuditFields(
+                    {
+                        slug,
+                        description,
+                        themes,
+                    },
+                    profile.id
+                )
+            )
+            .eq('id', resolvedFlavorId);
+
+        revalidatePath(`/admin/data/humor-flavors/${resolvedFlavorId}`);
+        revalidatePath('/admin/data/humor-flavors');
+        revalidatePath('/admin');
+    }
 
     async function duplicateFlavor() {
         'use server';
 
-        const { supabase, profile } = await requireSuperadmin();
-        const currentFlavorId = Number(id);
-        const originalFlavorResult = await supabase
-            .from('humor_flavors')
-            .select('*')
-            .eq('id', Number.isNaN(currentFlavorId) ? id : currentFlavorId)
-            .maybeSingle();
+        const { supabase: actionSupabase, profile } = await requireSuperadmin();
+        const originalFlavorResult = await fetchFlavor(actionSupabase, resolvedFlavorId);
         if (!originalFlavorResult.data) {
             return;
         }
 
         const originalFlavor = asRecord(originalFlavorResult.data);
-        const originalStepsResult = await supabase
-            .from('humor_flavor_steps')
-            .select('*')
-            .eq('humor_flavor_id', Number.isNaN(currentFlavorId) ? id : currentFlavorId)
-            .order('order_by', { ascending: true });
+        const originalSteps = await fetchOrderedSteps(actionSupabase, resolvedFlavorId);
+        const payload = stripAuditFields(originalFlavor);
+        delete payload.id;
+        delete payload.created_at;
+        delete payload.updated_at;
+        payload.slug = `${pickString(originalFlavor, ['slug'], `flavor-${resolvedFlavorId}`)}-copy`;
 
-        const flavorPayload = stripAuditFields(originalFlavor);
-        delete flavorPayload.id;
-        delete flavorPayload.created_at;
-        delete flavorPayload.updated_at;
-        flavorPayload.slug = `${pickString(originalFlavor, ['slug'], `flavor-${id}`)}-copy`;
-
-        const insertedFlavor = await supabase
+        const insertedFlavor = await actionSupabase
             .from('humor_flavors')
-            .insert(withInsertAuditFields(flavorPayload, profile.id))
+            .insert(withInsertAuditFields(payload, profile.id))
             .select('id')
             .maybeSingle();
 
         const newFlavorId = insertedFlavor.data?.id;
         if (!newFlavorId) {
-            revalidatePath('/admin/data/humor-flavors');
             return;
         }
 
-        const originalSteps = (originalStepsResult.data ?? []).map((row) => asRecord(row));
         if (originalSteps.length > 0) {
             const stepPayloads = originalSteps.map((step) => {
-                const payload = stripAuditFields(step);
-                delete payload.id;
-                delete payload.created_at;
-                delete payload.updated_at;
-                payload.humor_flavor_id = newFlavorId;
-                return withInsertAuditFields(payload, profile.id);
+                const nextPayload = stripAuditFields(step);
+                delete nextPayload.id;
+                delete nextPayload.created_at;
+                delete nextPayload.updated_at;
+                nextPayload.humor_flavor_id = newFlavorId;
+                return withInsertAuditFields(nextPayload, profile.id);
             });
-            await supabase.from('humor_flavor_steps').insert(stepPayloads);
+            await actionSupabase.from('humor_flavor_steps').insert(stepPayloads);
+            await resequenceFlavorSteps(actionSupabase, profile.id, newFlavorId);
         }
 
         revalidatePath('/admin/data/humor-flavors');
         revalidatePath('/admin');
+        redirect(`/admin/data/humor-flavors/${newFlavorId}`);
+    }
+
+    async function deleteFlavor() {
+        'use server';
+
+        const { supabase: actionSupabase } = await requireSuperadmin();
+        await actionSupabase.from('humor_flavor_steps').delete().eq('humor_flavor_id', resolvedFlavorId);
+        await actionSupabase.from('humor_flavors').delete().eq('id', resolvedFlavorId);
+
+        revalidatePath('/admin/data/humor-flavors');
+        revalidatePath('/admin');
+        redirect('/admin/data/humor-flavors');
     }
 
     async function addHumorFlavorStep(formData: FormData) {
         'use server';
 
-        const { supabase, profile } = await requireSuperadmin();
-        const targetFlavorId = Number(String(formData.get('humor_flavor_id') ?? ''));
-        if (Number.isNaN(targetFlavorId)) {
-            return;
-        }
-
-        const stepNumber = Number(String(formData.get('step_number') ?? ''));
+        const { supabase: actionSupabase, profile } = await requireSuperadmin();
+        const requestedOrder = Number(String(formData.get('step_number') ?? ''));
         const llmModelId = Number(String(formData.get('llm_model_id') ?? ''));
         const stepTypeId = Number(String(formData.get('humor_flavor_step_type_id') ?? ''));
         const inputTypeId = Number(String(formData.get('llm_input_type_id') ?? ''));
@@ -145,107 +300,190 @@ export default async function ManageFlavorStepsPage({
         const temperature = temperatureRaw.length > 0 ? Number(temperatureRaw) : null;
         const description = String(formData.get('description') ?? '').trim();
 
-        await supabase.from('humor_flavor_steps').insert(
-            withInsertAuditFields(
-                {
-                    humor_flavor_id: targetFlavorId,
-                    order_by: stepNumber,
-                    llm_model_id: Number.isNaN(llmModelId) ? null : llmModelId,
-                    humor_flavor_step_type_id: Number.isNaN(stepTypeId) ? null : stepTypeId,
-                    llm_input_type_id: Number.isNaN(inputTypeId) ? null : inputTypeId,
-                    llm_output_type_id: Number.isNaN(outputTypeId) ? null : outputTypeId,
-                    llm_system_prompt: systemPrompt,
-                    llm_user_prompt: userPrompt,
-                    llm_temperature: temperature,
-                    description,
-                },
-                profile.id
+        const inserted = await actionSupabase
+            .from('humor_flavor_steps')
+            .insert(
+                withInsertAuditFields(
+                    {
+                        humor_flavor_id: resolvedFlavorId,
+                        order_by: Number.isNaN(requestedOrder) ? 9999 : requestedOrder,
+                        llm_model_id: Number.isNaN(llmModelId) ? null : llmModelId,
+                        humor_flavor_step_type_id: Number.isNaN(stepTypeId) ? null : stepTypeId,
+                        llm_input_type_id: Number.isNaN(inputTypeId) ? null : inputTypeId,
+                        llm_output_type_id: Number.isNaN(outputTypeId) ? null : outputTypeId,
+                        llm_system_prompt: systemPrompt,
+                        llm_user_prompt: userPrompt,
+                        llm_temperature: temperature,
+                        description,
+                    },
+                    profile.id
+                )
             )
-        );
+            .select('id')
+            .maybeSingle();
 
-        revalidatePath(`/admin/data/humor-flavors/${targetFlavorId}`);
+        const newStepId = inserted.data?.id;
+        const orderedSteps = await fetchOrderedSteps(actionSupabase, resolvedFlavorId);
+        const stepIds = orderedSteps
+            .map((step) => pickNumber(step, ['id'], null))
+            .filter((value): value is number => value !== null);
+
+        if (newStepId) {
+            const existingIndex = stepIds.indexOf(newStepId);
+            if (existingIndex >= 0) {
+                stepIds.splice(existingIndex, 1);
+            }
+            const targetIndex = clampOrder(requestedOrder, stepIds.length + 1) - 1;
+            stepIds.splice(targetIndex, 0, newStepId);
+            await persistStepOrder(actionSupabase, profile.id, stepIds);
+        } else {
+            await resequenceFlavorSteps(actionSupabase, profile.id, resolvedFlavorId);
+        }
+
+        revalidatePath(`/admin/data/humor-flavors/${resolvedFlavorId}`);
         revalidatePath('/admin/data/humor-flavors');
         revalidatePath('/admin');
-        redirect(`/admin/data/humor-flavors/${targetFlavorId}`);
     }
 
-    const stepsResult = await supabase
-        .from('humor_flavor_steps')
-        .select('*')
-        .eq('humor_flavor_id', Number.isNaN(flavorId) ? id : flavorId);
-    const stepRows = (stepsResult.data ?? []).map((row) => asRecord(row));
-    const orderedSteps = [...stepRows].sort((left, right) => {
-        const leftStep = pickNumber(left, ['order_by'], 0) ?? 0;
-        const rightStep = pickNumber(right, ['order_by'], 0) ?? 0;
-        return leftStep - rightStep;
-    });
-    const showCreateModal = String(resolvedSearchParams?.create ?? '').trim() === '1';
+    async function saveHumorFlavorStep(formData: FormData) {
+        'use server';
 
-    const modelIds = Array.from(
-        new Set(
-            orderedSteps
-                .map((row) => pickNumber(row, ['llm_model_id'], null))
-                .filter((value): value is number => value !== null)
-        )
-    );
-    const modelsResult =
-        modelIds.length > 0
-            ? await supabase.from('llm_models').select('*').in('id', modelIds)
-            : { data: [], error: null };
+        const { supabase: actionSupabase, profile } = await requireSuperadmin();
+        const stepId = Number(String(formData.get('step_id') ?? ''));
+        const requestedOrder = Number(String(formData.get('step_number') ?? ''));
+        const llmModelId = Number(String(formData.get('llm_model_id') ?? ''));
+        const stepTypeId = Number(String(formData.get('humor_flavor_step_type_id') ?? ''));
+        const inputTypeId = Number(String(formData.get('llm_input_type_id') ?? ''));
+        const outputTypeId = Number(String(formData.get('llm_output_type_id') ?? ''));
+        const systemPrompt = String(formData.get('system_prompt') ?? '');
+        const userPrompt = String(formData.get('user_prompt') ?? '');
+        const temperatureRaw = String(formData.get('temperature') ?? '').trim();
+        const temperature = temperatureRaw.length > 0 ? Number(temperatureRaw) : null;
+        const description = String(formData.get('description') ?? '').trim();
+
+        if (Number.isNaN(stepId)) {
+            return;
+        }
+
+        await actionSupabase
+            .from('humor_flavor_steps')
+            .update(
+                withUpdateAuditFields(
+                    {
+                        llm_model_id: Number.isNaN(llmModelId) ? null : llmModelId,
+                        humor_flavor_step_type_id: Number.isNaN(stepTypeId) ? null : stepTypeId,
+                        llm_input_type_id: Number.isNaN(inputTypeId) ? null : inputTypeId,
+                        llm_output_type_id: Number.isNaN(outputTypeId) ? null : outputTypeId,
+                        llm_system_prompt: systemPrompt,
+                        llm_user_prompt: userPrompt,
+                        llm_temperature: temperature,
+                        description,
+                        order_by: Number.isNaN(requestedOrder) ? 9999 : requestedOrder,
+                    },
+                    profile.id
+                )
+            )
+            .eq('id', stepId);
+
+        const orderedSteps = await fetchOrderedSteps(actionSupabase, resolvedFlavorId);
+        const stepIds = orderedSteps
+            .map((step) => pickNumber(step, ['id'], null))
+            .filter((value): value is number => value !== null);
+        const currentIndex = stepIds.indexOf(stepId);
+        if (currentIndex >= 0) {
+            stepIds.splice(currentIndex, 1);
+        }
+        const targetIndex = clampOrder(requestedOrder, stepIds.length + 1) - 1;
+        stepIds.splice(targetIndex, 0, stepId);
+        await persistStepOrder(actionSupabase, profile.id, stepIds);
+
+        revalidatePath(`/admin/data/humor-flavors/${resolvedFlavorId}`);
+        revalidatePath('/admin/data/humor-flavors');
+        revalidatePath('/admin');
+    }
+
+    async function deleteHumorFlavorStep(formData: FormData) {
+        'use server';
+
+        const { supabase: actionSupabase, profile } = await requireSuperadmin();
+        const stepId = Number(String(formData.get('step_id') ?? ''));
+        if (Number.isNaN(stepId)) {
+            return;
+        }
+
+        await actionSupabase.from('humor_flavor_steps').delete().eq('id', stepId);
+        await resequenceFlavorSteps(actionSupabase, profile.id, resolvedFlavorId);
+
+        revalidatePath(`/admin/data/humor-flavors/${resolvedFlavorId}`);
+        revalidatePath('/admin/data/humor-flavors');
+        revalidatePath('/admin');
+    }
+
+    async function moveHumorFlavorStep(formData: FormData) {
+        'use server';
+
+        const { supabase: actionSupabase, profile } = await requireSuperadmin();
+        const stepId = Number(String(formData.get('step_id') ?? ''));
+        const direction = String(formData.get('direction') ?? '');
+        if (Number.isNaN(stepId) || (direction !== 'up' && direction !== 'down')) {
+            return;
+        }
+
+        const orderedSteps = await fetchOrderedSteps(actionSupabase, resolvedFlavorId);
+        const stepIds = orderedSteps
+            .map((step) => pickNumber(step, ['id'], null))
+            .filter((value): value is number => value !== null);
+        const currentIndex = stepIds.indexOf(stepId);
+        if (currentIndex === -1) {
+            return;
+        }
+
+        const swapIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+        if (swapIndex < 0 || swapIndex >= stepIds.length) {
+            return;
+        }
+
+        [stepIds[currentIndex], stepIds[swapIndex]] = [stepIds[swapIndex], stepIds[currentIndex]];
+        await persistStepOrder(actionSupabase, profile.id, stepIds);
+
+        revalidatePath(`/admin/data/humor-flavors/${resolvedFlavorId}`);
+        revalidatePath('/admin/data/humor-flavors');
+        revalidatePath('/admin');
+    }
+
+    const [steps, modelsResult, stepTypesResult, inputTypesResult, outputTypesResult, recentPromptChains, recentCaptions, testImagesResult] =
+        await Promise.all([
+            fetchOrderedSteps(supabase, resolvedFlavorId),
+            supabase.from('llm_models').select('*').order('name', { ascending: true }),
+            supabase.from('humor_flavor_step_types').select('*').order('name', { ascending: true }),
+            supabase.from('llm_input_types').select('*').order('name', { ascending: true }),
+            supabase.from('llm_output_types').select('*').order('name', { ascending: true }),
+            fetchRecentPromptChains(supabase, resolvedFlavorId),
+            fetchRecentCaptions(supabase, resolvedFlavorId),
+            supabase
+                .from('images')
+                .select('*')
+                .eq('is_common_use', true)
+                .order('created_datetime_utc', { ascending: false })
+                .limit(8),
+        ]);
+
+    const models = (modelsResult.data ?? []).map((row) => asRecord(row)).sort(sortByLabel);
+    const stepTypes = (stepTypesResult.data ?? []).map((row) => asRecord(row)).sort(sortByLabel);
+    const inputTypes = (inputTypesResult.data ?? []).map((row) => asRecord(row)).sort(sortByLabel);
+    const outputTypes = (outputTypesResult.data ?? []).map((row) => asRecord(row)).sort(sortByLabel);
+    const testImages = (testImagesResult.data ?? []).map((row) => asRecord(row));
+
     const modelById = new Map<number, Record<string, unknown>>();
-    for (const model of modelsResult.data ?? []) {
-        const row = asRecord(model);
-        const modelId = pickNumber(row, ['id'], null);
-        if (modelId !== null) {
-            modelById.set(modelId, row);
+    for (const row of models) {
+        const lookupId = pickNumber(row, ['id'], null);
+        if (lookupId !== null) {
+            modelById.set(lookupId, row);
         }
     }
 
-    const stepTypeIds = Array.from(
-        new Set(
-            orderedSteps
-                .map((row) => pickNumber(row, ['humor_flavor_step_type_id'], null))
-                .filter((value): value is number => value !== null)
-        )
-    );
-    const inputTypeIds = Array.from(
-        new Set(
-            orderedSteps
-                .map((row) => pickNumber(row, ['llm_input_type_id'], null))
-                .filter((value): value is number => value !== null)
-        )
-    );
-    const outputTypeIds = Array.from(
-        new Set(
-            orderedSteps
-                .map((row) => pickNumber(row, ['llm_output_type_id'], null))
-                .filter((value): value is number => value !== null)
-        )
-    );
-    const [stepTypesResult, inputTypesResult, outputTypesResult, allModelsResult] = await Promise.all([
-        showCreateModal
-            ? supabase.from('humor_flavor_step_types').select('*')
-            : stepTypeIds.length > 0
-            ? supabase.from('humor_flavor_step_types').select('*').in('id', stepTypeIds)
-            : Promise.resolve({ data: [], error: null }),
-        showCreateModal
-            ? supabase.from('llm_input_types').select('*')
-            : inputTypeIds.length > 0
-            ? supabase.from('llm_input_types').select('*').in('id', inputTypeIds)
-            : Promise.resolve({ data: [], error: null }),
-        showCreateModal
-            ? supabase.from('llm_output_types').select('*')
-            : outputTypeIds.length > 0
-            ? supabase.from('llm_output_types').select('*').in('id', outputTypeIds)
-            : Promise.resolve({ data: [], error: null }),
-        showCreateModal
-            ? supabase.from('llm_models').select('*').order('name', { ascending: true })
-            : Promise.resolve({ data: [], error: null }),
-    ]);
-
     const stepTypeById = new Map<number, Record<string, unknown>>();
-    for (const stepType of stepTypesResult.data ?? []) {
-        const row = asRecord(stepType);
+    for (const row of stepTypes) {
         const lookupId = pickNumber(row, ['id'], null);
         if (lookupId !== null) {
             stepTypeById.set(lookupId, row);
@@ -253,8 +491,7 @@ export default async function ManageFlavorStepsPage({
     }
 
     const inputTypeById = new Map<number, Record<string, unknown>>();
-    for (const inputType of inputTypesResult.data ?? []) {
-        const row = asRecord(inputType);
+    for (const row of inputTypes) {
         const lookupId = pickNumber(row, ['id'], null);
         if (lookupId !== null) {
             inputTypeById.set(lookupId, row);
@@ -262,358 +499,672 @@ export default async function ManageFlavorStepsPage({
     }
 
     const outputTypeById = new Map<number, Record<string, unknown>>();
-    for (const outputType of outputTypesResult.data ?? []) {
-        const row = asRecord(outputType);
+    for (const row of outputTypes) {
         const lookupId = pickNumber(row, ['id'], null);
         if (lookupId !== null) {
             outputTypeById.set(lookupId, row);
         }
     }
 
-    const createModelOptions = (allModelsResult.data ?? [])
-        .map((row) => asRecord(row))
-        .sort(sortByLabel);
-    const createStepTypeOptions = (stepTypesResult.data ?? [])
-        .map((row) => asRecord(row))
-        .sort(sortByLabel);
-    const createInputTypeOptions = (inputTypesResult.data ?? [])
-        .map((row) => asRecord(row))
-        .sort(sortByLabel);
-    const createOutputTypeOptions = (outputTypesResult.data ?? [])
-        .map((row) => asRecord(row))
-        .sort(sortByLabel);
+    const captionImageIds = Array.from(
+        new Set(
+            recentCaptions
+                .map((caption) => pickString(caption, ['image_id'], ''))
+                .filter((value) => value.length > 0)
+        )
+    );
+    const imagesResult =
+        captionImageIds.length > 0
+            ? await supabase.from('images').select('*').in('id', captionImageIds)
+            : { data: [], error: null };
+    const imageById = new Map<string, Record<string, unknown>>();
+    for (const row of (imagesResult.data ?? []).map((image) => asRecord(image))) {
+        const imageId = pickString(row, ['id'], '');
+        if (imageId) {
+            imageById.set(imageId, row);
+        }
+    }
 
-    const nextStepNumber =
-        (orderedSteps.length > 0
-            ? pickNumber(orderedSteps[orderedSteps.length - 1], ['order_by'], 0)
-            : 0) ?? 0;
+    const promptChainRows = recentPromptChains.map((row) => {
+        const promptChainId = String(row.id ?? 'N/A');
+        const captionRequestId = pickString(row, ['caption_request_id'], 'N/A');
+        const createdAt = formatDate(
+            pickDateValue(row, ['created_datetime_utc', 'created_datetime_', 'created_at'])
+        );
+        return [
+            <span
+                key={`prompt-chain-${promptChainId}`}
+                className="font-mono text-xs text-[#B7C5FF]"
+            >
+                {promptChainId}
+            </span>,
+            <span key={`prompt-chain-caption-request-${promptChainId}`}>{captionRequestId}</span>,
+            <span key={`prompt-chain-created-${promptChainId}`}>{createdAt}</span>,
+        ];
+    });
+
+    const captionRows = recentCaptions.map((caption) => {
+        const captionId = pickString(caption, ['id'], 'N/A');
+        const imageId = pickString(caption, ['image_id'], '');
+        const image = asRecord(imageById.get(imageId));
+        const imageUrl = pickString(image, ['url', 'cdn_url', 'storage_url'], '');
+        const content = pickString(caption, ['content', 'caption', 'text'], 'N/A');
+        const createdAt = formatDate(
+            pickDateValue(caption, ['created_datetime_utc', 'created_datetime_', 'created_at'])
+        );
+
+        return [
+            <span className="font-mono text-xs text-[#B7C5FF]" key={`caption-id-${captionId}`}>
+                {captionId}
+            </span>,
+            imageUrl ? (
+                <img
+                    key={`caption-image-${captionId}`}
+                    src={imageUrl}
+                    alt={captionId}
+                    className="h-14 w-14 rounded-xl object-cover"
+                />
+            ) : (
+                <span key={`caption-image-${captionId}`} className="text-sm text-[var(--admin-muted)]">
+                    No image
+                </span>
+            ),
+            <span
+                key={`caption-content-${captionId}`}
+                className="block max-w-[420px] whitespace-pre-wrap break-words"
+            >
+                {content}
+            </span>,
+            <span key={`caption-created-${captionId}`}>{createdAt}</span>,
+        ];
+    });
+
+    const nextStepNumber = steps.length + 1;
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 text-[var(--admin-text)]">
             <div className="space-y-3">
                 <Link
                     href="/admin/data/humor-flavors"
                     className="inline-flex text-sm text-[#B7C5FF] underline-offset-2 hover:underline"
                 >
-                    ← Back to All Flavors
+                    ← Back to Humor Flavors
                 </Link>
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                     <div>
-                        <h2 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
-                            Manage Steps for: {flavorSlug}
+                        <h2 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[var(--admin-text)]">
+                            Prompt Chain Tool: {flavorSlug}
                         </h2>
-                        <p className="mt-1 text-sm text-[#A6ACB6]">
-                            Adjust the pipeline order and configuration for this flavor.
+                        <p className="mt-1 max-w-3xl text-sm text-[var(--admin-muted)]">
+                            Manage this humor flavor’s ordered step chain, edit prompts, reorder execution, review outputs, and test it against the REST pipeline.
                         </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <form action={duplicateFlavor}>
                             <button
                                 type="submit"
-                                className="inline-flex rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#D4D8DF] transition hover:bg-white/[0.08]"
+                                className="rounded-xl border border-[var(--admin-border)] bg-[var(--admin-panel)] px-4 py-2 text-sm font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
                             >
                                 Duplicate Flavor
                             </button>
                         </form>
-                        <Link
-                            href={`/admin/data/humor-flavors/${id}?create=1`}
-                            className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
-                        >
-                            Add Humor Flavor Step
-                        </Link>
-                    </div>
-                </div>
-            </div>
-
-            <div className="space-y-4">
-                {orderedSteps.map((step, index) => {
-                    const stepId = pickNumber(step, ['id'], null);
-                    const stepNumber = pickNumber(step, ['order_by'], null);
-                    const llmModelId = pickNumber(step, ['llm_model_id'], null);
-                    const model = llmModelId !== null ? modelById.get(llmModelId) : undefined;
-                    const modelName = pickString(asRecord(model), ['name'], 'Unknown Model');
-                    const providerModelId = pickString(
-                        asRecord(model),
-                        ['provider_model_id'],
-                        'Unknown'
-                    );
-                    const stepType = pickString(
-                        asRecord(
-                            stepTypeById.get(pickNumber(step, ['humor_flavor_step_type_id'], null) ?? -1)
-                        ),
-                        ['slug', 'name', 'description'],
-                        'Unknown'
-                    );
-                    const inputType = pickString(
-                        asRecord(inputTypeById.get(pickNumber(step, ['llm_input_type_id'], null) ?? -1)),
-                        ['slug', 'name', 'description'],
-                        'Unknown'
-                    );
-                    const outputType = pickString(
-                        asRecord(outputTypeById.get(pickNumber(step, ['llm_output_type_id'], null) ?? -1)),
-                        ['slug', 'name', 'description'],
-                        'Unknown'
-                    );
-                    const systemPrompt = pickPrompt(step, ['llm_system_prompt']);
-                    const userPrompt = pickPrompt(step, ['llm_user_prompt']);
-                    const temperatureValue = pickNumber(step, ['llm_temperature'], null);
-
-                    return (
-                        <div
-                            key={stepId ?? stepNumber ?? `step-${index}`}
-                            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5"
-                        >
-                            <h3 className="text-lg font-semibold text-[#EDEDEF]">
-                                Step Number: {stepNumber ?? 'Unknown'}
-                            </h3>
-                            <dl className="mt-4 grid gap-4 sm:grid-cols-2">
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">Step ID</dt>
-                                    <dd className="mt-1 font-mono text-sm text-[#D4D8DF]">
-                                        #{stepId ?? 'Unknown'}
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">LLM Model</dt>
-                                    <dd className="mt-1 text-sm text-[#D4D8DF]">{modelName}</dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">
-                                        LLM Model ID
-                                    </dt>
-                                    <dd className="mt-1 font-mono text-sm text-[#D4D8DF]">
-                                        {providerModelId}
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">Step Type</dt>
-                                    <dd className="mt-1 text-sm text-[#D4D8DF]">{stepType}</dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">Input Type</dt>
-                                    <dd className="mt-1 text-sm text-[#D4D8DF]">{inputType}</dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">Output Type</dt>
-                                    <dd className="mt-1 text-sm text-[#D4D8DF]">{outputType}</dd>
-                                </div>
-                                <div className="sm:col-span-2">
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">
-                                        System Prompt
-                                    </dt>
-                                    <dd className="mt-2 whitespace-pre-wrap rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-[#D4D8DF]">
-                                        {systemPrompt}
-                                    </dd>
-                                </div>
-                                <div className="sm:col-span-2">
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">
-                                        User Prompt
-                                    </dt>
-                                    <dd className="mt-2 whitespace-pre-wrap rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-[#D4D8DF]">
-                                        {userPrompt}
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs uppercase tracking-[0.14em] text-[#8A8F98]">
-                                        Temperature
-                                    </dt>
-                                    <dd className="mt-1 text-sm text-[#D4D8DF]">
-                                        {temperatureValue ?? 'Unknown'}
-                                    </dd>
-                                </div>
-                            </dl>
-                        </div>
-                    );
-                })}
-            </div>
-
-            {showCreateModal ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8 backdrop-blur-sm">
-                    <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/10 bg-[#111318] p-6 shadow-2xl">
-                        <div>
-                            <h3 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
-                                Add Humor Flavor Step
-                            </h3>
-                        </div>
-
-                        <form action={addHumorFlavorStep} className="mt-6 space-y-5">
-                            <input type="hidden" name="humor_flavor_id" value={id} />
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">Step Number</span>
-                                <input
-                                    type="number"
-                                    name="step_number"
-                                    defaultValue={nextStepNumber + 1}
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                />
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">LLM Model ID</span>
-                                <select
-                                    name="llm_model_id"
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                    defaultValue=""
-                                >
-                                    <option value="">Select a model</option>
-                                    {createModelOptions.map((model) => {
-                                        const optionId = pickNumber(model, ['id'], null);
-                                        const optionName = pickString(model, ['name'], 'Unknown Model');
-                                        const optionProviderModelId = pickString(
-                                            model,
-                                            ['provider_model_id'],
-                                            ''
-                                        );
-                                        if (optionId === null) {
-                                            return null;
-                                        }
-                                        return (
-                                            <option key={optionId} value={optionId}>
-                                                {optionName}
-                                                {optionProviderModelId ? ` (${optionProviderModelId})` : ''}
-                                            </option>
-                                        );
-                                    })}
-                                </select>
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">Step Type</span>
-                                <select
-                                    name="humor_flavor_step_type_id"
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                    defaultValue=""
-                                >
-                                    <option value="">Select a step type</option>
-                                    {createStepTypeOptions.map((stepType) => {
-                                        const optionId = pickNumber(stepType, ['id'], null);
-                                        const optionLabel = pickString(
-                                            stepType,
-                                            ['slug', 'name', 'description'],
-                                            'Unknown'
-                                        );
-                                        if (optionId === null) {
-                                            return null;
-                                        }
-                                        return (
-                                            <option key={optionId} value={optionId}>
-                                                {optionLabel}
-                                            </option>
-                                        );
-                                    })}
-                                </select>
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">Input Type</span>
-                                <select
-                                    name="llm_input_type_id"
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                    defaultValue=""
-                                >
-                                    <option value="">Select an input type</option>
-                                    {createInputTypeOptions.map((inputType) => {
-                                        const optionId = pickNumber(inputType, ['id'], null);
-                                        const optionLabel = pickString(
-                                            inputType,
-                                            ['slug', 'name', 'description'],
-                                            'Unknown'
-                                        );
-                                        if (optionId === null) {
-                                            return null;
-                                        }
-                                        return (
-                                            <option key={optionId} value={optionId}>
-                                                {optionLabel}
-                                            </option>
-                                        );
-                                    })}
-                                </select>
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">Output Type</span>
-                                <select
-                                    name="llm_output_type_id"
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                    defaultValue=""
-                                >
-                                    <option value="">Select an output type</option>
-                                    {createOutputTypeOptions.map((outputType) => {
-                                        const optionId = pickNumber(outputType, ['id'], null);
-                                        const optionLabel = pickString(
-                                            outputType,
-                                            ['slug', 'name', 'description'],
-                                            'Unknown'
-                                        );
-                                        if (optionId === null) {
-                                            return null;
-                                        }
-                                        return (
-                                            <option key={optionId} value={optionId}>
-                                                {optionLabel}
-                                            </option>
-                                        );
-                                    })}
-                                </select>
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">System Prompt</span>
-                                <textarea
-                                    name="system_prompt"
-                                    rows={6}
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                />
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">User Prompt</span>
-                                <textarea
-                                    name="user_prompt"
-                                    rows={6}
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                />
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">Temperature</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    name="temperature"
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                />
-                            </label>
-
-                            <label className="block space-y-2">
-                                <span className="text-sm font-semibold text-[#EDEDEF]">Description</span>
-                                <textarea
-                                    name="description"
-                                    rows={3}
-                                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-[#EDEDEF] outline-none focus:border-[#5E6AD2]/70"
-                                />
-                            </label>
-
-                            <div className="flex items-center justify-end gap-3 pt-2">
-                                <Link
-                                    href={`/admin/data/humor-flavors/${id}`}
-                                    className="inline-flex rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#D4D8DF] transition hover:bg-white/[0.08]"
-                                >
-                                    Cancel
-                                </Link>
-                                <button
-                                    type="submit"
-                                    className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
-                                >
-                                    Save changes
-                                </button>
-                            </div>
+                        <form action={deleteFlavor}>
+                            <button
+                                type="submit"
+                                className="rounded-xl border border-[var(--admin-danger-border)] bg-[var(--admin-danger-bg)] px-4 py-2 text-sm font-semibold text-[var(--admin-danger-text)] transition hover:opacity-90"
+                            >
+                                Delete Flavor
+                            </button>
                         </form>
                     </div>
                 </div>
-            ) : null}
+            </div>
+
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+                <form
+                    action={saveFlavor}
+                    className="space-y-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5"
+                >
+                    <div>
+                        <h3 className="text-xl font-semibold text-[var(--admin-text)]">Flavor Settings</h3>
+                        <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                            Update the flavor metadata that frames this prompt chain.
+                        </p>
+                    </div>
+
+                    <label className="block space-y-2">
+                        <span className="text-sm font-semibold text-[var(--admin-text)]">Slug</span>
+                        <input
+                            type="text"
+                            name="slug"
+                            defaultValue={flavorSlug}
+                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                        />
+                    </label>
+
+                    <label className="block space-y-2">
+                        <span className="text-sm font-semibold text-[var(--admin-text)]">Description</span>
+                        <textarea
+                            name="description"
+                            defaultValue={flavorDescription}
+                            rows={4}
+                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                        />
+                    </label>
+
+                    <label className="block space-y-2">
+                        <span className="text-sm font-semibold text-[var(--admin-text)]">Themes</span>
+                        <textarea
+                            name="themes"
+                            defaultValue={flavorThemes.join('\n')}
+                            rows={4}
+                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                        />
+                    </label>
+
+                    <div className="flex justify-end">
+                        <button
+                            type="submit"
+                            className="rounded-xl border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
+                        >
+                            Save Flavor
+                        </button>
+                    </div>
+                </form>
+
+                <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
+                    <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                        <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Flavor ID</p>
+                        <p className="mt-3 font-mono text-2xl text-[var(--admin-text)]">#{resolvedFlavorId}</p>
+                    </div>
+                    <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                        <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Steps</p>
+                        <p className="mt-3 text-2xl font-semibold text-[var(--admin-text)]">{steps.length}</p>
+                    </div>
+                    <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                        <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Recent Captions</p>
+                        <p className="mt-3 text-2xl font-semibold text-[var(--admin-text)]">{recentCaptions.length}</p>
+                    </div>
+                </div>
+            </section>
+
+            <section className="space-y-4">
+                <div>
+                    <h3 className="text-xl font-semibold text-[var(--admin-text)]">Flavor Steps</h3>
+                    <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                        Each step runs in order. Edit prompts inline, move steps up or down, or add new ones to the chain.
+                    </p>
+                </div>
+
+                {steps.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-[var(--admin-border)] bg-[var(--admin-panel)] px-5 py-10 text-center text-sm text-[var(--admin-muted)]">
+                        This humor flavor has no steps yet.
+                    </div>
+                ) : null}
+
+                <div className="space-y-4">
+                    {steps.map((step, index) => {
+                        const stepId = pickNumber(step, ['id'], null);
+                        const stepOrder = pickNumber(step, ['order_by'], index + 1) ?? index + 1;
+                        const llmModelId = pickNumber(step, ['llm_model_id'], null);
+                        const stepTypeId = pickNumber(step, ['humor_flavor_step_type_id'], null);
+                        const inputTypeId = pickNumber(step, ['llm_input_type_id'], null);
+                        const outputTypeId = pickNumber(step, ['llm_output_type_id'], null);
+                        const model = llmModelId !== null ? asRecord(modelById.get(llmModelId)) : {};
+                        const stepType = stepTypeId !== null ? asRecord(stepTypeById.get(stepTypeId)) : {};
+                        const inputType = inputTypeId !== null ? asRecord(inputTypeById.get(inputTypeId)) : {};
+                        const outputType = outputTypeId !== null ? asRecord(outputTypeById.get(outputTypeId)) : {};
+                        const systemPrompt = pickPrompt(step, ['llm_system_prompt']);
+                        const userPrompt = pickPrompt(step, ['llm_user_prompt']);
+                        const temperature = pickNumber(step, ['llm_temperature'], null);
+                        const description = pickString(step, ['description'], '');
+
+                        return (
+                            <div
+                                key={stepId ?? `step-${index}`}
+                                className="space-y-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5"
+                            >
+                                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                                    <div>
+                                        <h4 className="text-lg font-semibold text-[var(--admin-text)]">
+                                            Step {stepOrder}
+                                        </h4>
+                                        <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                                            {pickString(stepType, ['slug', 'name', 'description'], 'Unassigned step type')}
+                                            {' · '}
+                                            {pickString(model, ['name'], 'No model selected')}
+                                            {' · '}
+                                            {pickString(inputType, ['slug', 'name'], 'Unknown input')}
+                                            {' → '}
+                                            {pickString(outputType, ['slug', 'name'], 'Unknown output')}
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <form action={moveHumorFlavorStep}>
+                                            <input type="hidden" name="step_id" value={stepId ?? ''} />
+                                            <input type="hidden" name="direction" value="up" />
+                                            <button
+                                                type="submit"
+                                                className="rounded-xl border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 text-sm font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                                            >
+                                                Move Up
+                                            </button>
+                                        </form>
+                                        <form action={moveHumorFlavorStep}>
+                                            <input type="hidden" name="step_id" value={stepId ?? ''} />
+                                            <input type="hidden" name="direction" value="down" />
+                                            <button
+                                                type="submit"
+                                                className="rounded-xl border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 text-sm font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                                            >
+                                                Move Down
+                                            </button>
+                                        </form>
+                                        <form action={deleteHumorFlavorStep}>
+                                            <input type="hidden" name="step_id" value={stepId ?? ''} />
+                                            <button
+                                                type="submit"
+                                                className="rounded-xl border border-[var(--admin-danger-border)] bg-[var(--admin-danger-bg)] px-3 py-2 text-sm font-semibold text-[var(--admin-danger-text)] transition hover:opacity-90"
+                                            >
+                                                Delete Step
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                                <form action={saveHumorFlavorStep} className="space-y-4">
+                                    <input type="hidden" name="step_id" value={stepId ?? ''} />
+                                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                                        <label className="space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                Step Order
+                                            </span>
+                                            <input
+                                                type="number"
+                                                name="step_number"
+                                                min="1"
+                                                defaultValue={stepOrder}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            />
+                                        </label>
+
+                                        <label className="space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                LLM Model
+                                            </span>
+                                            <select
+                                                name="llm_model_id"
+                                                defaultValue={llmModelId ?? ''}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            >
+                                                <option value="">Select a model</option>
+                                                {models.map((modelOption) => {
+                                                    const optionId = pickNumber(modelOption, ['id'], null);
+                                                    if (optionId === null) {
+                                                        return null;
+                                                    }
+                                                    return (
+                                                        <option key={optionId} value={optionId}>
+                                                            {pickString(modelOption, ['name'], 'Unknown Model')}
+                                                        </option>
+                                                    );
+                                                })}
+                                            </select>
+                                        </label>
+
+                                        <label className="space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                Step Type
+                                            </span>
+                                            <select
+                                                name="humor_flavor_step_type_id"
+                                                defaultValue={stepTypeId ?? ''}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            >
+                                                <option value="">Select a step type</option>
+                                                {stepTypes.map((stepTypeOption) => {
+                                                    const optionId = pickNumber(stepTypeOption, ['id'], null);
+                                                    if (optionId === null) {
+                                                        return null;
+                                                    }
+                                                    return (
+                                                        <option key={optionId} value={optionId}>
+                                                            {pickString(stepTypeOption, ['slug', 'name', 'description'], 'Unknown')}
+                                                        </option>
+                                                    );
+                                                })}
+                                            </select>
+                                        </label>
+
+                                        <label className="space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                Input Type
+                                            </span>
+                                            <select
+                                                name="llm_input_type_id"
+                                                defaultValue={inputTypeId ?? ''}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            >
+                                                <option value="">Select an input type</option>
+                                                {inputTypes.map((inputTypeOption) => {
+                                                    const optionId = pickNumber(inputTypeOption, ['id'], null);
+                                                    if (optionId === null) {
+                                                        return null;
+                                                    }
+                                                    return (
+                                                        <option key={optionId} value={optionId}>
+                                                            {pickString(inputTypeOption, ['slug', 'name', 'description'], 'Unknown')}
+                                                        </option>
+                                                    );
+                                                })}
+                                            </select>
+                                        </label>
+
+                                        <label className="space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                Output Type
+                                            </span>
+                                            <select
+                                                name="llm_output_type_id"
+                                                defaultValue={outputTypeId ?? ''}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            >
+                                                <option value="">Select an output type</option>
+                                                {outputTypes.map((outputTypeOption) => {
+                                                    const optionId = pickNumber(outputTypeOption, ['id'], null);
+                                                    if (optionId === null) {
+                                                        return null;
+                                                    }
+                                                    return (
+                                                        <option key={optionId} value={optionId}>
+                                                            {pickString(outputTypeOption, ['slug', 'name', 'description'], 'Unknown')}
+                                                        </option>
+                                                    );
+                                                })}
+                                            </select>
+                                        </label>
+                                    </div>
+
+                                    <label className="block space-y-2">
+                                        <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                            Description
+                                        </span>
+                                        <textarea
+                                            name="description"
+                                            rows={2}
+                                            defaultValue={description}
+                                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                        />
+                                    </label>
+
+                                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
+                                        <label className="block space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                System Prompt
+                                            </span>
+                                            <textarea
+                                                name="system_prompt"
+                                                rows={7}
+                                                defaultValue={systemPrompt}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 font-mono text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            />
+                                        </label>
+                                        <label className="block space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                User Prompt
+                                            </span>
+                                            <textarea
+                                                name="user_prompt"
+                                                rows={7}
+                                                defaultValue={userPrompt}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 font-mono text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            />
+                                        </label>
+                                        <label className="space-y-2">
+                                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                                Temperature
+                                            </span>
+                                            <input
+                                                type="number"
+                                                name="temperature"
+                                                step="0.1"
+                                                defaultValue={temperature ?? ''}
+                                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                                            />
+                                        </label>
+                                    </div>
+
+                                    <div className="flex justify-end">
+                                        <button
+                                            type="submit"
+                                            className="rounded-xl border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
+                                        >
+                                            Save Step
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
+
+            <section className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                <div>
+                    <h3 className="text-xl font-semibold text-[var(--admin-text)]">Add Step</h3>
+                    <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                        Add a new stage to this humor flavor’s prompt chain.
+                    </p>
+                </div>
+
+                <form action={addHumorFlavorStep} className="mt-5 space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                        <label className="space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                Step Order
+                            </span>
+                            <input
+                                type="number"
+                                name="step_number"
+                                min="1"
+                                defaultValue={nextStepNumber}
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            />
+                        </label>
+
+                        <label className="space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                LLM Model
+                            </span>
+                            <select
+                                name="llm_model_id"
+                                defaultValue=""
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            >
+                                <option value="">Select a model</option>
+                                {models.map((modelOption) => {
+                                    const optionId = pickNumber(modelOption, ['id'], null);
+                                    if (optionId === null) {
+                                        return null;
+                                    }
+                                    return (
+                                        <option key={optionId} value={optionId}>
+                                            {pickString(modelOption, ['name'], 'Unknown Model')}
+                                        </option>
+                                    );
+                                })}
+                            </select>
+                        </label>
+
+                        <label className="space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                Step Type
+                            </span>
+                            <select
+                                name="humor_flavor_step_type_id"
+                                defaultValue=""
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            >
+                                <option value="">Select a step type</option>
+                                {stepTypes.map((stepTypeOption) => {
+                                    const optionId = pickNumber(stepTypeOption, ['id'], null);
+                                    if (optionId === null) {
+                                        return null;
+                                    }
+                                    return (
+                                        <option key={optionId} value={optionId}>
+                                            {pickString(stepTypeOption, ['slug', 'name', 'description'], 'Unknown')}
+                                        </option>
+                                    );
+                                })}
+                            </select>
+                        </label>
+
+                        <label className="space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                Input Type
+                            </span>
+                            <select
+                                name="llm_input_type_id"
+                                defaultValue=""
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            >
+                                <option value="">Select an input type</option>
+                                {inputTypes.map((inputTypeOption) => {
+                                    const optionId = pickNumber(inputTypeOption, ['id'], null);
+                                    if (optionId === null) {
+                                        return null;
+                                    }
+                                    return (
+                                        <option key={optionId} value={optionId}>
+                                            {pickString(inputTypeOption, ['slug', 'name', 'description'], 'Unknown')}
+                                        </option>
+                                    );
+                                })}
+                            </select>
+                        </label>
+
+                        <label className="space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                Output Type
+                            </span>
+                            <select
+                                name="llm_output_type_id"
+                                defaultValue=""
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            >
+                                <option value="">Select an output type</option>
+                                {outputTypes.map((outputTypeOption) => {
+                                    const optionId = pickNumber(outputTypeOption, ['id'], null);
+                                    if (optionId === null) {
+                                        return null;
+                                    }
+                                    return (
+                                        <option key={optionId} value={optionId}>
+                                            {pickString(outputTypeOption, ['slug', 'name', 'description'], 'Unknown')}
+                                        </option>
+                                    );
+                                })}
+                            </select>
+                        </label>
+                    </div>
+
+                    <label className="block space-y-2">
+                        <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                            Description
+                        </span>
+                        <textarea
+                            name="description"
+                            rows={2}
+                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                        />
+                    </label>
+
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
+                        <label className="block space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                System Prompt
+                            </span>
+                            <textarea
+                                name="system_prompt"
+                                rows={7}
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 font-mono text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            />
+                        </label>
+
+                        <label className="block space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                User Prompt
+                            </span>
+                            <textarea
+                                name="user_prompt"
+                                rows={7}
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 font-mono text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            />
+                        </label>
+
+                        <label className="space-y-2">
+                            <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                Temperature
+                            </span>
+                            <input
+                                type="number"
+                                step="0.1"
+                                name="temperature"
+                                className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-3 py-2 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
+                            />
+                        </label>
+                    </div>
+
+                    <div className="flex justify-end">
+                        <button
+                            type="submit"
+                            className="rounded-xl border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
+                        >
+                            Add Step
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <HumorFlavorTester
+                flavorId={resolvedFlavorId}
+                flavorSlug={flavorSlug}
+                images={testImages.map((image) => ({
+                    id: pickString(image, ['id'], ''),
+                    url: pickString(image, ['url', 'cdn_url', 'storage_url'], ''),
+                    description: pickString(image, ['image_description', 'description'], ''),
+                }))}
+            />
+
+            <div className="grid gap-6 xl:grid-cols-2">
+                <section className="space-y-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                    <div>
+                        <h3 className="text-xl font-semibold text-[var(--admin-text)]">Recent Prompt Chains</h3>
+                        <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                            Prompt-chain runs recently produced with this humor flavor.
+                        </p>
+                    </div>
+                    <DataTable
+                        columns={['Prompt Chain', 'Caption Request', 'Created']}
+                        rows={promptChainRows}
+                        emptyMessage="No prompt chains found for this humor flavor."
+                    />
+                </section>
+
+                <section className="space-y-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                    <div>
+                        <h3 className="text-xl font-semibold text-[var(--admin-text)]">Recent Captions</h3>
+                        <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                            Captions already produced and stored for this humor flavor.
+                        </p>
+                    </div>
+                    <DataTable
+                        columns={['Caption ID', 'Image', 'Caption', 'Created']}
+                        rows={captionRows}
+                        emptyMessage="No saved captions found for this humor flavor."
+                    />
+                </section>
+            </div>
         </div>
     );
 }
