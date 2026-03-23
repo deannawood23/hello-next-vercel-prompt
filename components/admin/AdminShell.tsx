@@ -66,7 +66,7 @@ export function AdminShell({ children, userEmail }: AdminShellProps) {
                                     Signed in as
                                 </p>
                                 <p className="mt-1 truncate text-sm font-semibold text-[var(--admin-text)]">
-                                    {userEmail ?? 'Admin'}
+                                    {userEmail ?? 'Matrix'}
                                 </p>
                                 <button
                                     type="button"

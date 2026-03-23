@@ -79,7 +79,7 @@ export default async function LoginPage() {
                 <div className="linear-glass relative z-10 w-full rounded-2xl p-6 sm:p-8">
                     <div className="space-y-4 text-center">
                         <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#8A8F98]">
-                            Admin Access Only
+                            Matrix Access Only
                         </p>
                         <h1 className="flex items-center justify-center gap-2 bg-gradient-to-b from-white via-white/95 to-white/65 bg-clip-text font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-transparent sm:text-4xl">
                         SIGN IN TO GET CRACKD

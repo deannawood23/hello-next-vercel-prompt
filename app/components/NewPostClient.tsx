@@ -287,7 +287,7 @@ export function NewPostClient() {
                     href="/admin"
                     className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#EDEDEF] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition duration-200 ease-out hover:border-white/20 hover:bg-white/[0.08]"
                 >
-                    Back to admin
+                    Back to Matrix
                 </Link>
                 <details className="group relative">
                     <summary

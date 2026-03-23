@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { supabase } from '../../src/lib/supabase/client';
 
-const NAV_ITEMS = [{ href: '/admin', label: 'Admin' }];
+const NAV_ITEMS = [{ href: '/admin', label: 'Matrix' }];
 
 export function AppShell() {
     const pathname = usePathname();

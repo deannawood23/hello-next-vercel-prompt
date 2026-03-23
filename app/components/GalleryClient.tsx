@@ -409,7 +409,7 @@ export function GalleryClient({ userEmail }: GalleryClientProps) {
                     href="/admin"
                     className="inline-flex rounded-lg border border-[#5E6AD2]/50 bg-[#5E6AD2] px-4 py-2 text-sm font-semibold text-white shadow-[0_0_0_1px_rgba(94,106,210,0.5),0_4px_12px_rgba(94,106,210,0.3),inset_0_1px_0_rgba(255,255,255,0.2)] transition duration-200 ease-out hover:bg-[#6872D9]"
                 >
-                    Admin
+                    Matrix
                 </Link>
                 <details className="group relative">
                     <summary

@@ -1008,6 +1008,11 @@ export default async function AdminResourcePage({
     }
 
     if (currentResource === 'humor-flavors') {
+        const query = String(resolvedSearchParams?.q ?? '').trim();
+        const normalizedQuery = query.toLowerCase();
+        const requestedPage = Number.parseInt(String(resolvedSearchParams?.page ?? '1'), 10);
+        const pageSize = 12;
+        const currentPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
         const editId = String(resolvedSearchParams?.edit ?? '').trim();
         const isCreating = String(resolvedSearchParams?.create ?? '').trim() === '1';
         const editResult = editId
@@ -1024,7 +1029,50 @@ export default async function AdminResourcePage({
             ? editRow.themes.map((value) => String(value)).join('\n')
             : pickString(editRow, ['themes'], '');
 
-        const flavorRows = data.map((row) => {
+        const sortedFlavors = [...data].sort((left, right) =>
+            pickString(left, ['slug', 'name', 'description'], '').localeCompare(
+                pickString(right, ['slug', 'name', 'description'], ''),
+                'en',
+                { sensitivity: 'base' }
+            )
+        );
+
+        const filteredFlavors = sortedFlavors.filter((row) => {
+            if (!normalizedQuery) {
+                return true;
+            }
+
+            const slug = pickString(row, ['slug'], '').toLowerCase();
+            const description = pickString(row, ['description'], '').toLowerCase();
+            const themes = Array.isArray(row.themes)
+                ? row.themes.map((value) => String(value).toLowerCase()).join(' ')
+                : pickString(row, ['themes'], '').toLowerCase();
+
+            return (
+                slug.includes(normalizedQuery) ||
+                description.includes(normalizedQuery) ||
+                themes.includes(normalizedQuery)
+            );
+        });
+
+        const totalPages = Math.max(1, Math.ceil(filteredFlavors.length / pageSize));
+        const safePage = Math.min(currentPage, totalPages);
+        const pageStart = (safePage - 1) * pageSize;
+        const pagedFlavors = filteredFlavors.slice(pageStart, pageStart + pageSize);
+
+        const buildFlavorGridHref = (page: number) => {
+            const params = new URLSearchParams();
+            if (query) {
+                params.set('q', query);
+            }
+            if (page > 1) {
+                params.set('page', String(page));
+            }
+            const search = params.toString();
+            return search ? `/admin/data/humor-flavors?${search}` : '/admin/data/humor-flavors';
+        };
+
+        const flavorCards = pagedFlavors.map((row) => {
             const rawId = row.id;
             const id =
                 typeof rawId === 'number'
@@ -1034,93 +1082,184 @@ export default async function AdminResourcePage({
                     : 'N/A';
             const slug = pickString(row, ['slug'], 'N/A');
             const description = pickString(row, ['description'], 'N/A');
-            return [
-                <span className="font-mono text-xs text-[#B7C5FF]" key={`id-${id}`}>
-                    {id}
-                </span>,
-                <span key={`slug-${id}`} className="font-mono text-xs text-[#D4D8DF]">
-                    {slug}
-                </span>,
-                <span
-                    key={`description-${id}`}
-                    className="block min-w-[260px] max-w-[420px] whitespace-pre-wrap text-[#D4D8DF]"
+            const themes = Array.isArray(row.themes)
+                ? row.themes.map((value) => String(value)).filter(Boolean)
+                : [];
+
+            return (
+                <article
+                    key={id}
+                    className="group rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5 transition hover:border-[var(--ls-border-accent)] hover:bg-[var(--ls-surface-hover)]"
                 >
-                    {description}
-                </span>,
-                <div className="flex min-w-[360px] flex-wrap gap-2" key={`actions-${id}`}>
-                    <Link
-                        href={`/admin/data/humor-flavors/${id}`}
-                        className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1 text-xs font-semibold text-[#D4D8DF] transition hover:bg-white/[0.08]"
-                    >
-                        Manage Steps
-                    </Link>
-                    <form action={duplicateHumorFlavor}>
-                        <input type="hidden" name="id" value={id} />
-                        <button
-                            type="submit"
-                            className="rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1 text-xs font-semibold text-[#D4D8DF] transition hover:bg-white/[0.08]"
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-2">
+                            <p className="font-mono text-xs text-[#B7C5FF]">#{id}</p>
+                            <Link
+                                href={`/admin/data/humor-flavors/${id}`}
+                                className="block font-[var(--font-playfair)] text-2xl font-semibold tracking-tight text-[var(--admin-text)] underline-offset-4 group-hover:underline"
+                            >
+                                {slug}
+                            </Link>
+                        </div>
+                        <span className="rounded-full border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                            Humor Flavor
+                        </span>
+                    </div>
+
+                    <p className="mt-4 min-h-20 whitespace-pre-wrap text-sm leading-6 text-[var(--admin-muted)]">
+                        {description}
+                    </p>
+
+                    {themes.length > 0 ? (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            {themes.map((theme) => (
+                                <span
+                                    key={`${id}-${theme}`}
+                                    className="rounded-full border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-1 text-xs text-[var(--admin-text)]"
+                                >
+                                    {theme}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
+
+                    <div className="mt-5 flex flex-wrap gap-2">
+                        <Link
+                            href={`/admin/data/humor-flavors/${id}`}
+                            className="inline-flex rounded-lg border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
                         >
-                            Duplicate
-                        </button>
-                    </form>
-                    <Link
-                        href={`/admin/data/humor-flavors?edit=${id}`}
-                        className="inline-flex rounded-lg border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-[#5E6AD2]/35"
-                    >
-                        Edit
-                    </Link>
-                    <form action={deleteHumorFlavor}>
-                        <input type="hidden" name="id" value={id} />
-                        <button
-                            type="submit"
-                            className="rounded-lg border border-rose-400/40 bg-rose-400/15 px-2.5 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/25"
+                            Open Matrix
+                        </Link>
+                        <form action={duplicateHumorFlavor}>
+                            <input type="hidden" name="id" value={id} />
+                            <button
+                                type="submit"
+                                className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 text-xs font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                            >
+                                Duplicate
+                            </button>
+                        </form>
+                        <Link
+                            href={`/admin/data/humor-flavors?edit=${id}`}
+                            className="inline-flex rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 text-xs font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
                         >
-                            Delete
-                        </button>
-                    </form>
-                </div>,
-            ];
+                            Edit
+                        </Link>
+                        <form action={deleteHumorFlavor}>
+                            <input type="hidden" name="id" value={id} />
+                            <button
+                                type="submit"
+                                className="rounded-lg border border-[var(--admin-danger-border)] bg-[var(--admin-danger-bg)] px-3 py-2 text-xs font-semibold text-[var(--admin-danger-text)] transition hover:opacity-90"
+                            >
+                                Delete
+                            </button>
+                        </form>
+                    </div>
+                </article>
+            );
         });
 
         return (
-            <div className="space-y-4">
+            <div className="space-y-6">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <h2 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
                             {config.title}
                         </h2>
-                        <p className="mt-1 text-sm text-[#A6ACB6]">{config.description}</p>
-                    </div>
-                    <Link
-                        href="/admin/data/humor-flavors?create=1"
-                        className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
-                    >
-                        Create Flavor
-                    </Link>
-                    {error ? (
-                        <p className="mt-2 rounded-lg border border-amber-400/25 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
-                            Query warning: {error}
+                        <p className="mt-1 text-sm text-[#A6ACB6]">
+                            Search and open the humor flavor matrices.
                         </p>
-                    ) : null}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Link
+                            href="/admin/data/humor-flavors?create=1"
+                            className="inline-flex rounded-xl border border-[#5E6AD2]/50 bg-[#5E6AD2]/25 px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5E6AD2]/35"
+                        >
+                            Create Flavor
+                        </Link>
+                        {error ? (
+                            <p className="rounded-lg border border-amber-400/25 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
+                                Query warning: {error}
+                            </p>
+                        ) : null}
+                    </div>
                 </div>
 
-                <DataTable
-                    columns={['ID', 'Slug', 'Description', 'Actions']}
-                    rows={flavorRows}
-                    emptyMessage={`No rows found in ${config.table}.`}
-                    rowClassName="cursor-pointer transition-colors hover:bg-white/[0.04]"
-                    rowHrefs={data.map((row) => {
-                        const rawId = row.id;
-                        const id =
-                            typeof rawId === 'number'
-                                ? String(rawId)
-                                : typeof rawId === 'string' && rawId.trim().length > 0
-                                ? rawId
-                                : '';
-                        return `/admin/data/humor-flavors/${id}`;
-                    })}
-                    nonLinkColumns={[3]}
-                />
+                <form method="get" className="grid gap-3 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+                    <label className="space-y-2">
+                        <span className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                            Search by Name or Description
+                        </span>
+                        <input
+                            type="search"
+                            name="q"
+                            defaultValue={query}
+                            placeholder="deadpan, surreal, awkward..."
+                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none placeholder:text-[var(--admin-subtle)] focus:border-[var(--ls-accent)]"
+                        />
+                    </label>
+                    <div className="flex items-end gap-2">
+                        <button
+                            type="submit"
+                            className="rounded-xl border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
+                        >
+                            Search
+                        </button>
+                        <Link
+                            href="/admin/data/humor-flavors"
+                            className="rounded-xl border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-4 py-3 text-sm font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                        >
+                            Clear
+                        </Link>
+                    </div>
+                    <div className="flex items-end justify-end text-sm text-[var(--admin-muted)]">
+                        {filteredFlavors.length} result{filteredFlavors.length === 1 ? '' : 's'}
+                    </div>
+                </form>
+
+                {filteredFlavors.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-[var(--admin-border)] bg-[var(--admin-panel)] px-5 py-16 text-center text-sm text-[var(--admin-muted)]">
+                        No humor flavors matched that search.
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">{flavorCards}</div>
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--admin-border)] bg-[var(--admin-panel)] px-4 py-3 text-sm text-[var(--admin-muted)]">
+                            <span>
+                                Showing {pageStart + 1} - {Math.min(pageStart + pagedFlavors.length, filteredFlavors.length)} of {filteredFlavors.length}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                {safePage > 1 ? (
+                                    <Link
+                                        href={buildFlavorGridHref(safePage - 1)}
+                                        className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                                    >
+                                        Previous
+                                    </Link>
+                                ) : (
+                                    <span className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-subtle)]">
+                                        Previous
+                                    </span>
+                                )}
+                                <span className="px-2 text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                                    Page {safePage} of {totalPages}
+                                </span>
+                                {safePage < totalPages ? (
+                                    <Link
+                                        href={buildFlavorGridHref(safePage + 1)}
+                                        className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                                    >
+                                        Next
+                                    </Link>
+                                ) : (
+                                    <span className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-subtle)]">
+                                        Next
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {editId && editResult.data ? (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8 backdrop-blur-sm">
