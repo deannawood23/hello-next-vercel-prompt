@@ -1089,29 +1089,31 @@ export default async function AdminResourcePage({
             return (
                 <article
                     key={id}
-                    className="group rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5 transition hover:border-[var(--ls-border-accent)] hover:bg-[var(--ls-surface-hover)]"
+                    className="group relative rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5 transition hover:border-[var(--ls-border-accent)] hover:bg-[var(--ls-surface-hover)]"
                 >
+                    <Link
+                        href={`/admin/data/humor-flavors/${id}`}
+                        aria-label={`Open ${slug}`}
+                        className="absolute inset-0 rounded-3xl"
+                    />
                     <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-2">
+                        <div className="relative z-10 space-y-2">
                             <p className="font-mono text-xs text-[#B7C5FF]">#{id}</p>
-                            <Link
-                                href={`/admin/data/humor-flavors/${id}`}
-                                className="block font-[var(--font-playfair)] text-2xl font-semibold tracking-tight text-[var(--admin-text)] underline-offset-4 group-hover:underline"
-                            >
+                            <span className="block font-[var(--font-playfair)] text-2xl font-semibold tracking-tight text-[var(--admin-text)] underline-offset-4 group-hover:underline">
                                 {slug}
-                            </Link>
+                            </span>
                         </div>
-                        <span className="rounded-full border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                        <span className="relative z-10 rounded-full border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
                             Humor Flavor
                         </span>
                     </div>
 
-                    <p className="mt-4 min-h-20 whitespace-pre-wrap text-sm leading-6 text-[var(--admin-muted)]">
+                    <p className="relative z-10 mt-4 min-h-20 whitespace-pre-wrap text-sm leading-6 text-[var(--admin-muted)]">
                         {description}
                     </p>
 
                     {themes.length > 0 ? (
-                        <div className="mt-4 flex flex-wrap gap-2">
+                        <div className="relative z-10 mt-4 flex flex-wrap gap-2">
                             {themes.map((theme) => (
                                 <span
                                     key={`${id}-${theme}`}
@@ -1123,7 +1125,7 @@ export default async function AdminResourcePage({
                         </div>
                     ) : null}
 
-                    <div className="mt-5 flex flex-wrap gap-2">
+                    <div className="relative z-10 mt-5 flex flex-wrap gap-2">
                         <Link
                             href={`/admin/data/humor-flavors/${id}`}
                             className="inline-flex rounded-lg border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
@@ -1160,7 +1162,7 @@ export default async function AdminResourcePage({
         });
 
         return (
-            <div className="space-y-6">
+            <div className="mx-auto w-full max-w-[1180px] space-y-6">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <h2 className="font-[var(--font-playfair)] text-3xl font-semibold tracking-tight text-[#EDEDEF]">
@@ -1223,7 +1225,9 @@ export default async function AdminResourcePage({
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">{flavorCards}</div>
+                        <div className="mx-auto grid max-w-[1180px] gap-4 md:grid-cols-2 xl:grid-cols-3">
+                            {flavorCards}
+                        </div>
                         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--admin-border)] bg-[var(--admin-panel)] px-4 py-3 text-sm text-[var(--admin-muted)]">
                             <span>
                                 Showing {pageStart + 1} - {Math.min(pageStart + pagedFlavors.length, filteredFlavors.length)} of {filteredFlavors.length}

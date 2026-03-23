@@ -4,6 +4,8 @@ import { notFound, redirect } from 'next/navigation';
 import { requireSuperadmin } from '../../../../../src/lib/auth/requireSuperadmin';
 import {
     asRecord,
+    formatDate,
+    pickDateValue,
     pickString,
     stripAuditFields,
     withInsertAuditFields,
@@ -52,38 +54,9 @@ export default async function ManageFlavorStepsPage({
     const flavorThemes = Array.isArray(flavor.themes)
         ? flavor.themes.map((value) => String(value)).filter(Boolean)
         : [];
+    const flavorCreatedAt = formatDate(pickDateValue(flavor, ['created_datetime_utc', 'created_at']));
     const showDuplicateModal = String(resolvedSearchParams?.duplicate ?? '').trim() === '1';
     const editingStepId = Number(String(resolvedSearchParams?.editStep ?? ''));
-
-    async function saveFlavor(formData: FormData) {
-        'use server';
-
-        const { supabase: actionSupabase, profile } = await requireSuperadmin();
-        const slug = String(formData.get('slug') ?? '').trim();
-        const description = String(formData.get('description') ?? '').trim();
-        const themes = String(formData.get('themes') ?? '')
-            .split('\n')
-            .map((value) => value.trim())
-            .filter(Boolean);
-
-        await actionSupabase
-            .from('humor_flavors')
-            .update(
-                withUpdateAuditFields(
-                    {
-                        slug,
-                        description,
-                        themes,
-                    },
-                    profile.id
-                )
-            )
-            .eq('id', resolvedFlavorId);
-
-        revalidatePath(`/admin/data/humor-flavors/${resolvedFlavorId}`);
-        revalidatePath('/admin/data/humor-flavors');
-        revalidatePath('/admin');
-    }
 
     async function duplicateFlavor(formData: FormData) {
         'use server';
@@ -335,72 +308,38 @@ export default async function ManageFlavorStepsPage({
                 </div>
             </div>
 
-            <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
-                <form
-                    action={saveFlavor}
-                    className="space-y-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5"
-                >
-                    <div>
-                        <h3 className="text-xl font-semibold text-[var(--admin-text)]">Flavor Settings</h3>
-                        <p className="mt-1 text-sm text-[var(--admin-muted)]">
-                            Update the flavor metadata that frames this prompt chain.
-                        </p>
-                    </div>
-
-                    <label className="block space-y-2">
-                        <span className="text-sm font-semibold text-[var(--admin-text)]">Slug</span>
-                        <input
-                            type="text"
-                            name="slug"
-                            defaultValue={flavorSlug}
-                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
-                        />
-                    </label>
-
-                    <label className="block space-y-2">
-                        <span className="text-sm font-semibold text-[var(--admin-text)]">Description</span>
-                        <textarea
-                            name="description"
-                            defaultValue={flavorDescription}
-                            rows={4}
-                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
-                        />
-                    </label>
-
-                    <label className="block space-y-2">
-                        <span className="text-sm font-semibold text-[var(--admin-text)]">Themes</span>
-                        <textarea
-                            name="themes"
-                            defaultValue={flavorThemes.join('\n')}
-                            rows={4}
-                            className="w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm text-[var(--admin-text)] outline-none focus:border-[var(--ls-accent)]"
-                        />
-                    </label>
-
-                    <div className="flex justify-end">
-                        <button
-                            type="submit"
-                            className="rounded-xl border border-[var(--ls-border-accent)] bg-[var(--ls-accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--ls-accent-bright)]"
-                        >
-                            Save Flavor
-                        </button>
-                    </div>
-                </form>
-
-                <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
-                    <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
-                        <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Flavor ID</p>
-                        <p className="mt-3 font-mono text-2xl text-[var(--admin-text)]">#{resolvedFlavorId}</p>
-                    </div>
-                    <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
-                        <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Steps</p>
-                        <p className="mt-3 text-2xl font-semibold text-[var(--admin-text)]">{steps.length}</p>
-                    </div>
-                    <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
-                        <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Outputs</p>
-                        <p className="mt-3 text-sm leading-6 text-[var(--admin-muted)]">
-                            Open the captions page to review the latest generated entries with attached images.
-                        </p>
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+                <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                    <h3 className="font-[var(--font-playfair)] text-4xl font-semibold tracking-tight text-[var(--admin-text)]">
+                        {flavorSlug}
+                    </h3>
+                    <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--admin-muted)]">
+                        {flavorDescription || 'No flavor description provided.'}
+                    </p>
+                </div>
+                <div className="rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-5">
+                    <p className="text-xs uppercase tracking-[0.18em] text-[var(--admin-subtle)]">
+                        Flavor Details
+                    </p>
+                    <div className="mt-5 space-y-4">
+                        <div>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Slug</p>
+                            <p className="mt-1 text-base font-semibold text-[var(--admin-text)]">{flavorSlug}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Created</p>
+                            <p className="mt-1 text-base font-semibold text-[var(--admin-text)]">{flavorCreatedAt}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Flavor ID</p>
+                            <p className="mt-1 font-mono text-base font-semibold text-[var(--admin-text)]">
+                                {resolvedFlavorId}
+                            </p>
+                        </div>
+                        <div>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">Steps</p>
+                            <p className="mt-1 text-base font-semibold text-[var(--admin-text)]">{steps.length}</p>
+                        </div>
                     </div>
                 </div>
             </section>

@@ -100,29 +100,94 @@ export async function resequenceFlavorSteps(
 }
 
 export async function fetchRecentCaptions(supabase: AdminSupabase, flavorId: number) {
-    const queries = [
+    const directQueries = [
         supabase
             .from('captions')
             .select('*')
             .eq('humor_flavor_id', flavorId)
             .order('created_datetime_utc', { ascending: false })
-            .limit(24),
+            .limit(200),
         supabase
             .from('captions')
             .select('*')
             .eq('humor_flavor_id', flavorId)
             .order('created_at', { ascending: false })
-            .limit(24),
+            .limit(200),
     ];
 
-    for (const query of queries) {
+    const directCaptions: Record<string, unknown>[] = [];
+    for (const query of directQueries) {
         const result = await query;
         if (!result.error) {
-            return (result.data ?? []).map((row) => asRecord(row));
+            directCaptions.push(...(result.data ?? []).map((row) => asRecord(row)));
+            break;
         }
     }
 
-    return [];
+    const responseResult = await supabase
+        .from('llm_model_responses')
+        .select('caption_request_id,llm_prompt_chain_id')
+        .eq('humor_flavor_id', flavorId)
+        .limit(500);
+
+    const responseRows = (responseResult.data ?? []).map((row) => asRecord(row));
+    const captionRequestIds = Array.from(
+        new Set(
+            responseRows
+                .map((row) => pickNumber(row, ['caption_request_id'], null))
+                .filter((value): value is number => value !== null)
+        )
+    );
+    const promptChainIds = Array.from(
+        new Set(
+            responseRows
+                .map((row) => pickNumber(row, ['llm_prompt_chain_id'], null))
+                .filter((value): value is number => value !== null)
+        )
+    );
+
+    const relatedCaptions: Record<string, unknown>[] = [];
+    if (captionRequestIds.length > 0) {
+        const byRequestResult = await supabase
+            .from('captions')
+            .select('*')
+            .in('caption_request_id', captionRequestIds)
+            .limit(200);
+        if (!byRequestResult.error) {
+            relatedCaptions.push(...(byRequestResult.data ?? []).map((row) => asRecord(row)));
+        }
+    }
+
+    if (promptChainIds.length > 0) {
+        const byPromptChainResult = await supabase
+            .from('captions')
+            .select('*')
+            .in('llm_prompt_chain_id', promptChainIds)
+            .limit(200);
+        if (!byPromptChainResult.error) {
+            relatedCaptions.push(...(byPromptChainResult.data ?? []).map((row) => asRecord(row)));
+        }
+    }
+
+    const allCaptions = [...directCaptions, ...relatedCaptions];
+    const deduped = new Map<string, Record<string, unknown>>();
+    for (const caption of allCaptions) {
+        const captionId = pickString(caption, ['id'], '');
+        if (!captionId) {
+            continue;
+        }
+        if (!deduped.has(captionId)) {
+            deduped.set(captionId, caption);
+        }
+    }
+
+    return Array.from(deduped.values()).sort((left, right) => {
+        const leftCreated =
+            Date.parse(pickString(left, ['created_datetime_utc', 'created_at'], '')) || 0;
+        const rightCreated =
+            Date.parse(pickString(right, ['created_datetime_utc', 'created_at'], '')) || 0;
+        return rightCreated - leftCreated;
+    });
 }
 
 export type StudyImageSetSummary = {
