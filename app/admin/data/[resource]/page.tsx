@@ -1096,16 +1096,11 @@ export default async function AdminResourcePage({
                         aria-label={`Open ${slug}`}
                         className="absolute inset-0 rounded-3xl"
                     />
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="relative z-10 space-y-2">
-                            <p className="font-mono text-xs text-[#B7C5FF]">#{id}</p>
+                    <div className="relative z-10 space-y-2">
+                            <p className="font-mono text-xs text-[var(--ls-accent)]">#{id}</p>
                             <span className="block font-[var(--font-playfair)] text-2xl font-semibold tracking-tight text-[var(--admin-text)] underline-offset-4 group-hover:underline">
                                 {slug}
                             </span>
-                        </div>
-                        <span className="relative z-10 rounded-full border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
-                            Humor Flavor
-                        </span>
                     </div>
 
                     <p className="relative z-10 mt-4 min-h-20 whitespace-pre-wrap text-sm leading-6 text-[var(--admin-muted)]">

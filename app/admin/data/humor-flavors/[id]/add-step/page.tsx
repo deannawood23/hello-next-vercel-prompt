@@ -109,7 +109,7 @@ export default async function AddHumorFlavorStepPage({
             <div className="space-y-3">
                 <Link
                     href={`/admin/data/humor-flavors/${resolvedFlavorId}`}
-                    className="inline-flex text-sm text-[#B7C5FF] underline-offset-2 hover:underline"
+                    className="inline-flex text-sm text-[var(--ls-accent)] underline-offset-2 hover:underline"
                 >
                     ← Back to {flavorSlug}
                 </Link>

@@ -28,7 +28,7 @@ export default async function HumorFlavorTestPage({
     return (
         <div className="space-y-6 text-[var(--admin-text)]">
             <div className="space-y-3">
-                <Link href={`/admin/data/humor-flavors/${flavorId}`} className="inline-flex text-sm text-[#B7C5FF] underline-offset-2 hover:underline">
+                <Link href={`/admin/data/humor-flavors/${flavorId}`} className="inline-flex text-sm text-[var(--ls-accent)] underline-offset-2 hover:underline">
                     ← Back to {flavorSlug}
                 </Link>
                 <div>
