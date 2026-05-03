@@ -7,10 +7,13 @@ import { fetchFlavor, fetchRecentCaptions } from '../_lib';
 
 export default async function HumorFlavorCaptionsPage({
     params,
+    searchParams,
 }: {
     params: Promise<{ id: string }>;
+    searchParams?: Promise<{ page?: string }>;
 }) {
     const { id } = await params;
+    const resolvedSearchParams = searchParams ? await searchParams : undefined;
     const flavorId = Number.parseInt(id, 10);
     if (!Number.isFinite(flavorId)) {
         notFound();
@@ -25,9 +28,16 @@ export default async function HumorFlavorCaptionsPage({
     const flavor = asRecord(flavorResult.data);
     const flavorSlug = pickString(flavor, ['slug'], id);
     const captions = await fetchRecentCaptions(supabase, flavorId);
+    const requestedPage = Number.parseInt(String(resolvedSearchParams?.page ?? '1'), 10);
+    const pageSize = 50;
+    const currentPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const totalPages = Math.max(1, Math.ceil(captions.length / pageSize));
+    const safePage = Math.min(currentPage, totalPages);
+    const pageStart = (safePage - 1) * pageSize;
+    const pagedCaptions = captions.slice(pageStart, pageStart + pageSize);
 
     const imageIds = Array.from(
-        new Set(captions.map((caption) => pickString(caption, ['image_id'], '')).filter(Boolean))
+        new Set(pagedCaptions.map((caption) => pickString(caption, ['image_id'], '')).filter(Boolean))
     );
     const imagesResult =
         imageIds.length > 0 ? await supabase.from('images').select('*').in('id', imageIds) : { data: [] };
@@ -38,6 +48,48 @@ export default async function HumorFlavorCaptionsPage({
             imageById.set(imageId, row);
         }
     }
+
+    const buildCaptionsHref = (page: number) =>
+        page > 1
+            ? `/admin/data/humor-flavors/${flavorId}/captions?page=${page}`
+            : `/admin/data/humor-flavors/${flavorId}/captions`;
+
+    const pagination = captions.length > pageSize ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--admin-border)] bg-[var(--admin-panel)] px-4 py-3 text-sm text-[var(--admin-muted)]">
+            <span>
+                Showing {pageStart + 1} - {Math.min(pageStart + pagedCaptions.length, captions.length)} of {captions.length}
+            </span>
+            <div className="flex items-center gap-2">
+                {safePage > 1 ? (
+                    <Link
+                        href={buildCaptionsHref(safePage - 1)}
+                        className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                    >
+                        Previous
+                    </Link>
+                ) : (
+                    <span className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-subtle)]">
+                        Previous
+                    </span>
+                )}
+                <span className="px-2 text-xs uppercase tracking-[0.14em] text-[var(--admin-subtle)]">
+                    Page {safePage} of {totalPages}
+                </span>
+                {safePage < totalPages ? (
+                    <Link
+                        href={buildCaptionsHref(safePage + 1)}
+                        className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-text)] transition hover:bg-[var(--ls-surface-hover)]"
+                    >
+                        Next
+                    </Link>
+                ) : (
+                    <span className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel-strong)] px-3 py-2 font-semibold text-[var(--admin-subtle)]">
+                        Next
+                    </span>
+                )}
+            </div>
+        </div>
+    ) : null;
 
     return (
         <div className="space-y-6 text-[var(--admin-text)]">
@@ -66,39 +118,43 @@ export default async function HumorFlavorCaptionsPage({
                     No saved captions found for this humor flavor.
                 </div>
             ) : (
-                <div className="grid gap-4 xl:grid-cols-2">
-                    {captions.map((caption) => {
-                        const captionId = pickString(caption, ['id'], 'N/A');
-                        const imageId = pickString(caption, ['image_id'], '');
-                        const image = asRecord(imageById.get(imageId));
-                        const imageUrl = pickString(image, ['url', 'cdn_url', 'storage_url'], '');
-                        const content = pickString(caption, ['content', 'caption', 'text'], 'N/A');
-                        const createdAt = formatDate(
-                            pickDateValue(caption, ['created_datetime_utc', 'created_datetime_', 'created_at'])
-                        );
+                <div className="space-y-4">
+                    {pagination}
+                    <div className="grid gap-4 xl:grid-cols-2">
+                        {pagedCaptions.map((caption) => {
+                            const captionId = pickString(caption, ['id'], 'N/A');
+                            const imageId = pickString(caption, ['image_id'], '');
+                            const image = asRecord(imageById.get(imageId));
+                            const imageUrl = pickString(image, ['url', 'cdn_url', 'storage_url'], '');
+                            const content = pickString(caption, ['content', 'caption', 'text'], 'N/A');
+                            const createdAt = formatDate(
+                                pickDateValue(caption, ['created_datetime_utc', 'created_datetime_', 'created_at'])
+                            );
 
-                        return (
-                            <article
-                                key={captionId}
-                                className="grid gap-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-4 md:grid-cols-[180px_minmax(0,1fr)]"
-                            >
-                                <div className="overflow-hidden rounded-2xl bg-[var(--admin-panel-strong)]">
-                                    {imageUrl ? (
-                                        <img src={imageUrl} alt={captionId} className="h-44 w-full object-cover" />
-                                    ) : (
-                                        <div className="flex h-44 items-center justify-center text-sm text-[var(--admin-muted)]">No image</div>
-                                    )}
-                                </div>
-                                <div className="space-y-3">
-                                    <div className="flex flex-wrap items-center justify-between gap-3">
-                                        <p className="font-mono text-xs text-[#B7C5FF]">{captionId}</p>
-                                        <p className="text-sm text-[var(--admin-muted)]">{createdAt}</p>
+                            return (
+                                <article
+                                    key={captionId}
+                                    className="grid gap-4 rounded-3xl border border-[var(--admin-border)] bg-[var(--admin-panel)] p-4 md:grid-cols-[180px_minmax(0,1fr)]"
+                                >
+                                    <div className="overflow-hidden rounded-2xl bg-[var(--admin-panel-strong)]">
+                                        {imageUrl ? (
+                                            <img src={imageUrl} alt={captionId} className="h-44 w-full object-cover" />
+                                        ) : (
+                                            <div className="flex h-44 items-center justify-center text-sm text-[var(--admin-muted)]">No image</div>
+                                        )}
                                     </div>
-                                    <p className="whitespace-pre-wrap text-base leading-7 text-[var(--admin-text)]">{content}</p>
-                                </div>
-                            </article>
-                        );
-                    })}
+                                    <div className="space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <p className="font-mono text-xs text-[#B7C5FF]">{captionId}</p>
+                                            <p className="text-sm text-[var(--admin-muted)]">{createdAt}</p>
+                                        </div>
+                                        <p className="whitespace-pre-wrap text-base leading-7 text-[var(--admin-text)]">{content}</p>
+                                    </div>
+                                </article>
+                            );
+                        })}
+                    </div>
+                    {pagination}
                 </div>
             )}
         </div>

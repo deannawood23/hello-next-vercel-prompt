@@ -100,37 +100,74 @@ export async function resequenceFlavorSteps(
 }
 
 export async function fetchRecentCaptions(supabase: AdminSupabase, flavorId: number) {
+    type RangeQuery = {
+        range: (
+            from: number,
+            to: number
+        ) => PromiseLike<{
+            data: unknown[] | null;
+            error: { message: string } | null;
+        }>;
+    };
+
+    const fetchAllRows = async (buildQuery: () => RangeQuery) => {
+        const rows: Record<string, unknown>[] = [];
+        const batchSize = 1000;
+        let start = 0;
+
+        while (true) {
+            const result = await buildQuery().range(start, start + batchSize - 1);
+            if (result.error) {
+                return {
+                    rows: [] as Record<string, unknown>[],
+                    error: result.error.message,
+                };
+            }
+
+            const batch = (result.data ?? []).map((row) => asRecord(row));
+            rows.push(...batch);
+
+            if (batch.length < batchSize) {
+                return {
+                    rows,
+                    error: null as string | null,
+                };
+            }
+
+            start += batchSize;
+        }
+    };
+
     const directQueries = [
-        supabase
+        () => supabase
             .from('captions')
             .select('*')
             .eq('humor_flavor_id', flavorId)
-            .order('created_datetime_utc', { ascending: false })
-            .limit(200),
-        supabase
+            .order('created_datetime_utc', { ascending: false }),
+        () => supabase
             .from('captions')
             .select('*')
             .eq('humor_flavor_id', flavorId)
-            .order('created_at', { ascending: false })
-            .limit(200),
+            .order('created_at', { ascending: false }),
     ];
 
     const directCaptions: Record<string, unknown>[] = [];
-    for (const query of directQueries) {
-        const result = await query;
+    for (const buildQuery of directQueries) {
+        const result = await fetchAllRows(buildQuery);
         if (!result.error) {
-            directCaptions.push(...(result.data ?? []).map((row) => asRecord(row)));
+            directCaptions.push(...result.rows);
             break;
         }
     }
 
-    const responseResult = await supabase
-        .from('llm_model_responses')
-        .select('caption_request_id,llm_prompt_chain_id')
-        .eq('humor_flavor_id', flavorId)
-        .limit(500);
+    const responseResult = await fetchAllRows(() =>
+        supabase
+            .from('llm_model_responses')
+            .select('caption_request_id,llm_prompt_chain_id')
+            .eq('humor_flavor_id', flavorId)
+    );
 
-    const responseRows = (responseResult.data ?? []).map((row) => asRecord(row));
+    const responseRows = responseResult.rows;
     const captionRequestIds = Array.from(
         new Set(
             responseRows
@@ -148,24 +185,32 @@ export async function fetchRecentCaptions(supabase: AdminSupabase, flavorId: num
 
     const relatedCaptions: Record<string, unknown>[] = [];
     if (captionRequestIds.length > 0) {
-        const byRequestResult = await supabase
-            .from('captions')
-            .select('*')
-            .in('caption_request_id', captionRequestIds)
-            .limit(200);
-        if (!byRequestResult.error) {
-            relatedCaptions.push(...(byRequestResult.data ?? []).map((row) => asRecord(row)));
+        for (let index = 0; index < captionRequestIds.length; index += 100) {
+            const requestIdBatch = captionRequestIds.slice(index, index + 100);
+            const byRequestResult = await fetchAllRows(() =>
+                supabase
+                    .from('captions')
+                    .select('*')
+                    .in('caption_request_id', requestIdBatch)
+            );
+            if (!byRequestResult.error) {
+                relatedCaptions.push(...byRequestResult.rows);
+            }
         }
     }
 
     if (promptChainIds.length > 0) {
-        const byPromptChainResult = await supabase
-            .from('captions')
-            .select('*')
-            .in('llm_prompt_chain_id', promptChainIds)
-            .limit(200);
-        if (!byPromptChainResult.error) {
-            relatedCaptions.push(...(byPromptChainResult.data ?? []).map((row) => asRecord(row)));
+        for (let index = 0; index < promptChainIds.length; index += 100) {
+            const promptChainIdBatch = promptChainIds.slice(index, index + 100);
+            const byPromptChainResult = await fetchAllRows(() =>
+                supabase
+                    .from('captions')
+                    .select('*')
+                    .in('llm_prompt_chain_id', promptChainIdBatch)
+            );
+            if (!byPromptChainResult.error) {
+                relatedCaptions.push(...byPromptChainResult.rows);
+            }
         }
     }
 
