@@ -203,26 +203,48 @@ async function fetchTableRows(
     supabase: Awaited<ReturnType<typeof requireSuperadmin>>['supabase'],
     table: string
 ) {
+    const fetchBatchedRows = async (orderKey?: string) => {
+        const rows: Record<string, unknown>[] = [];
+        const batchSize = 1000;
+        let start = 0;
+
+        while (true) {
+            let query = supabase.from(table).select('*');
+            if (orderKey) {
+                query = query.order(orderKey, { ascending: false });
+            }
+
+            const result = await query.range(start, start + batchSize - 1);
+            if (result.error) {
+                return {
+                    rows: [] as Record<string, unknown>[],
+                    error: result.error.message,
+                };
+            }
+
+            const batch = (result.data ?? []).map((row) => asRecord(row));
+            rows.push(...batch);
+
+            if (batch.length < batchSize) {
+                return {
+                    rows,
+                    error: null as string | null,
+                };
+            }
+
+            start += batchSize;
+        }
+    };
+
     const orderKeys = ['created_datetime_utc', 'created_at', 'updated_at', 'id'];
     for (const key of orderKeys) {
-        const result = await supabase
-            .from(table)
-            .select('*')
-            .order(key, { ascending: false })
-            .limit(200);
+        const result = await fetchBatchedRows(key);
         if (!result.error) {
-            return {
-                rows: (result.data ?? []).map((row) => asRecord(row)),
-                error: null as string | null,
-            };
+            return result;
         }
     }
 
-    const fallback = await supabase.from(table).select('*').limit(200);
-    return {
-        rows: (fallback.data ?? []).map((row) => asRecord(row)),
-        error: fallback.error?.message ?? null,
-    };
+    return fetchBatchedRows();
 }
 
 export default async function AdminResourcePage({
